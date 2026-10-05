@@ -1,0 +1,223 @@
+# =============================================================================
+# Weather & Air Quality package  (home: Bangkok, Bueng Kum  13.828773, 100.6545224)
+# English `name:` values so derived entity_ids are stable across restores.
+#   slug("PM25 home") == pm25_home  etc.
+# Sources:
+#   PM2.5  : Open-Meteo (at home) + PCD Air4Thai (nearest station bkp77t)
+#   Rain   : ThaiWater 24h (nearest station BKK021)
+#   Radar  : /config/scripts/radar_notify.py -> /local/radar/latest.png + summary.json
+#
+# Sentinel convention for the command_line sensors below. summary.json may hold
+# JSON null for a source that failed this run; HA's command_line platform renders
+# a missing key as the literal string "None", which then shows up on the
+# dashboard and in the Telegram caption. So every template that can read a
+# nullable field substitutes a stand-in:
+#   numeric fields -> -1   (sensors.states(...)|int(-1) >= 0 is the test)
+#   text fields    -> 'ไม่มีข้อมูล' / 'ไม่มีเตือน'
+# `default(x, true)` is required: without the second argument it only replaces
+# an *undefined* key, not an explicit null. Do not remove it.
+# =============================================================================
+
+shell_command:
+  weather_radar_build: "python3 /config/scripts/radar_notify.py"
+
+# Reads /config/www/radar/summary.json written by radar_notify.py
+command_line:
+  - sensor:
+      name: "Radar rain near"
+      unique_id: radar_rain_near_cover
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.coverage_30km }}"
+      unit_of_measurement: "%"
+      icon: mdi:radar
+      scan_interval: 300
+  - binary_sensor:
+      name: "Radar rain now"
+      unique_id: radar_rain_now
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ 'ON' if value_json.rain_now else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device_class: moisture
+      scan_interval: 300
+  - binary_sensor:
+      name: "Radar rain approaching"
+      unique_id: radar_rain_approaching
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ 'ON' if value_json.approaching else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device_class: moisture
+      scan_interval: 300
+  - sensor:
+      name: "Rain next 60min mm"
+      unique_id: rain_next_60min_mm
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_next_60min_mm }}"
+      unit_of_measurement: "mm"
+      state_class: measurement
+      icon: mdi:weather-pouring
+      scan_interval: 300
+  - sensor:
+      name: "Rain soon in min"
+      unique_id: rain_soon_in_min
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_soon_in_min }}"
+      unit_of_measurement: "min"
+      icon: mdi:clock-outline
+      scan_interval: 300
+  - binary_sensor:
+      name: "Rain soon"
+      unique_id: rain_soon_nowcast
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ 'ON' if value_json.rain_soon else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device_class: moisture
+      scan_interval: 300
+  - binary_sensor:
+      name: "Flash flood watch"
+      unique_id: flash_flood_watch
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ 'ON' if value_json.flash_flood_watch else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      scan_interval: 900
+  - sensor:
+      name: "Radar rain class"
+      unique_id: radar_rain_class
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_class_label }}"
+      icon: mdi:weather-pouring
+      scan_interval: 300
+  - sensor:
+      name: "Radar zoom"
+      unique_id: radar_zoom
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.radar_zoom | default(-1, true) }}"
+      icon: mdi:magnify
+      scan_interval: 900
+  # --- TMD (กรมฝนหลวง) via data.tmd.go.th public API ---
+  - sensor:
+      name: "TMD rain 24h pct"
+      unique_id: tmd_rain_24h_pct
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.tmd_24h_rain_pct | default(-1, true) }}"
+      unit_of_measurement: "%"
+      icon: mdi:weather-partly-rainy
+      scan_interval: 1800
+  - sensor:
+      name: "TMD rain 7d pct"
+      unique_id: tmd_rain_7d_pct
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.tmd_7d_rain_pct | default(-1, true) }}"
+      unit_of_measurement: "%"
+      icon: mdi:calendar-weather
+      scan_interval: 3600
+  - sensor:
+      name: "TMD forecast 24h"
+      unique_id: tmd_forecast_24h
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.tmd_24h | default('ไม่มีข้อมูล', true) }}"
+      icon: mdi:text-box-outline
+      scan_interval: 3600
+  - sensor:
+      name: "TMD forecast 7d"
+      unique_id: tmd_forecast_7d
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.tmd_7d_desc | default('ไม่มีข้อมูล', true) }}"
+      icon: mdi:calendar-text-outline
+      scan_interval: 3600
+  - sensor:
+      name: "TMD warning"
+      unique_id: tmd_warning
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.tmd_warning | default('ไม่มีเตือน', true) }}"
+      icon: mdi:alert-outline
+      scan_interval: 1800
+
+rest:
+  # --- PM2.5 / PM10 at the exact home location (Open-Meteo CAMS) --------------
+  - resource: "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=13.828773&longitude=100.6545224&current=pm2_5,pm10,us_aqi&timezone=Asia%2FBangkok"
+    scan_interval: 900
+    sensor:
+      - name: "PM25 home"
+        unique_id: pm25_home_openmeteo
+        unit_of_measurement: "µg/m³"
+        device_class: pm25
+        state_class: measurement
+        value_template: "{{ value_json.current.pm2_5 }}"
+      - name: "PM10 home"
+        unique_id: pm10_home_openmeteo
+        unit_of_measurement: "µg/m³"
+        device_class: pm10
+        state_class: measurement
+        value_template: "{{ value_json.current.pm10 }}"
+
+  # --- PM2.5 nearest ground station (PCD Air4Thai, ~3.8 km) -------------------
+  - resource: "https://air4thai.pcd.go.th/services/getNewAQI_JSON.php"
+    verify_ssl: false
+    scan_interval: 1800
+    sensor:
+      - name: "PM25 PCD"
+        unique_id: pm25_pcd_station
+        unit_of_measurement: "µg/m³"
+        device_class: pm25
+        state_class: measurement
+        value_template: >-
+          {% set v = namespace(val=None) %}
+          {% for s in value_json.stations %}
+            {% if s.stationID == 'bkp77t' %}{% set v.val = s.AQILast.PM25.value %}{% endif %}
+          {% endfor %}
+          {{ v.val if v.val is not none else 'unknown' }}
+
+  # --- Rain last 24h nearest station (ThaiWater, ~7.8 km) ---------------------
+  - resource: "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h"
+    scan_interval: 1800
+    sensor:
+      - name: "Rain24 home"
+        unique_id: rain24_home_thaiwater
+        unit_of_measurement: "mm"
+        state_class: measurement
+        value_template: >-
+          {% set v = namespace(val=None) %}
+          {% for r in value_json.data %}
+            {% if r.station.tele_station_oldcode == 'BKK021' %}{% set v.val = r.rain_24h %}{% endif %}
+          {% endfor %}
+          {{ v.val if v.val is not none else 'unknown' }}
+
+template:
+  - sensor:
+      - name: "PM25 level"
+        unique_id: pm25_home_level
+        icon: mdi:blur
+        state: >-
+          {% set v = states('sensor.pm25_home') | float(0) %}
+          {% if v <= 15 %}ดีมาก
+          {% elif v <= 25 %}ดี
+          {% elif v <= 37.5 %}ปานกลาง
+          {% elif v <= 75 %}เริ่มมีผลต่อสุขภาพ
+          {% elif v <= 150 %}มีผลต่อสุขภาพ
+          {% else %}อันตราย{% endif %}
+
+input_number:
+  pm25_alert_threshold:
+    name: เกณฑ์เตือน PM2.5
+    min: 15
+    max: 150
+    step: 1
+    initial: 37
+    unit_of_measurement: "µg/m³"
+  rain_alert_threshold:
+    name: เกณฑ์ฝน 24 ชม. (mm)
+    min: 1
+    max: 100
+    step: 1
+    initial: 10
+    unit_of_measurement: "mm"
+
+input_boolean:
+  weather_alerts_enabled:
+    name: เปิดแจ้งเตือนอากาศ
+    icon: mdi:weather-partly-rainy
+    initial: true

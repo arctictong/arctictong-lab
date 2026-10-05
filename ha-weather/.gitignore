@@ -1,0 +1,13 @@
+# Rendered radar output. Regenerated on every build by radar_notify.py and
+# served from /config/www/radar/; a copy in the repo would only go stale.
+*.png
+
+# Test/verification byproducts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Font scratch space: radar_notify.py reads TTFs from /config/scripts/fonts on
+# the HA host, so the repo only needs the sources under fonts/.
+fonts/*.tmp
