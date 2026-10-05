@@ -1,0 +1,43 @@
+# The `version:` key was removed: compose v2 warns that it is obsolete and
+# ignores it, and the warning on every command is noise that hides real ones.
+services:
+  server:
+    build: ./server
+    container_name: note-server
+    restart: unless-stopped
+    volumes:
+      - ./server/data:/app/data
+      - ./credentials.env:/app/credentials.env:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_PATH=/app/data/notes.db
+      - IMAGES_DIR=/app/data/images
+      # Omit the credentials on purpose.  They used to be literals here, which
+      # meant a .env next to this file changed nothing -- a literal always beats
+      # ${VAR}.  auth.js reads /app/credentials.env instead, mounted above, so
+      # the source of truth is one file regardless of how this compose file is
+      # written.  Do not add AUTH_* or JWT_SECRET back into `environment:`.
+    expose:
+      - "3001"
+
+  client:
+    build: ./client
+    container_name: note-client
+    restart: unless-stopped
+    depends_on:
+      - server
+    expose:
+      - "80"
+
+  nginx:
+    image: nginx:alpine
+    container_name: note-nginx
+    restart: unless-stopped
+    depends_on:
+      - client
+      - server
+    ports:
+      - "8090:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
