@@ -1,0 +1,277 @@
+{
+  "data": [
+    {
+      "upid": "UPID:pve:000A0654:0A2847D5:6ABDC6FB:vncshell::root@pam:",
+      "node": "pve",
+      "type": "vncshell",
+      "id": "",
+      "user": "root@pam",
+      "starttime": 1790822139,
+      "saved": "0",
+      "pid": 656980
+    },
+    {
+      "upid": "UPID:pve:000C1745:0A48B48E:6ABE19FD:vncproxy:109:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790843389,
+      "saved": "0",
+      "pid": 792389
+    },
+    {
+      "upid": "UPID:pve:000C4C57:0A4B5AD9:6ABE20C6:vncshell::root@pam:",
+      "node": "pve",
+      "type": "vncshell",
+      "id": "",
+      "user": "root@pam",
+      "starttime": 1790845126,
+      "endtime": 1790845186,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000C4C33:0A4B5818:6ABE20BF:vncproxy:105:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "105",
+      "user": "root@pam",
+      "starttime": 1790845119,
+      "endtime": 1790845123,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000C4229:0A4B0143:6ABE1FE0:vzstart:105:root@pam:",
+      "node": "pve",
+      "type": "vzstart",
+      "id": "105",
+      "user": "root@pam",
+      "starttime": 1790844896,
+      "endtime": 1790844899,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000C412A:0A4AEFFE:6ABE1FB4:vzstop:105:root@pam:",
+      "node": "pve",
+      "type": "vzstop",
+      "id": "105",
+      "user": "root@pam",
+      "starttime": 1790844852,
+      "endtime": 1790844854,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000B6E2F:0A3E404E:6ABDFF3A:vncproxy:101:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790836538,
+      "endtime": 1790836589,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000A9AD6:0A318405:6ABDDEA0:vncproxy:109:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790828192,
+      "endtime": 1790828204,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:000A2CBA:0A2A9A29:6ABDCCED:pull_file:106:root@pam:",
+      "node": "pve",
+      "type": "pull_file",
+      "id": "106",
+      "user": "root@pam",
+      "starttime": 1790823661,
+      "endtime": 1790823661,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009F73D:0A27731C:6ABDC4DB:push_file:101:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790821595,
+      "endtime": 1790821595,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009EE56:0A26EE88:6ABDC387:push_file:109:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790821255,
+      "endtime": 1790821256,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009EE39:0A26ECD1:6ABDC383:pull_file:106:root@pam:",
+      "node": "pve",
+      "type": "pull_file",
+      "id": "106",
+      "user": "root@pam",
+      "starttime": 1790821251,
+      "endtime": 1790821251,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009EE14:0A26EBB0:6ABDC380:push_file:106:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "106",
+      "user": "root@pam",
+      "starttime": 1790821248,
+      "endtime": 1790821248,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009DE24:0A25F093:6ABDC0FD:vncshell::root@pam:",
+      "node": "pve",
+      "type": "vncshell",
+      "id": "",
+      "user": "root@pam",
+      "starttime": 1790820605,
+      "endtime": 1790821355,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009C487:0A24A053:6ABDBDA1:vncproxy:109:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790819745,
+      "endtime": 1790820237,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0009BCE4:0A243F24:6ABDBCA8:vncproxy:106:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "106",
+      "user": "root@pam",
+      "starttime": 1790819496,
+      "endtime": 1790819507,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:00082E46:0A0B4464:6ABD7CB5:aptupdate::root@pam:",
+      "node": "pve",
+      "type": "aptupdate",
+      "id": "",
+      "user": "root@pam",
+      "starttime": 1790803125,
+      "endtime": 1790803129,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0005ACD2:09E2D950:6ABD153D:push_file:101:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790776637,
+      "endtime": 1790776637,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0005ACB5:09E2D8F6:6ABD153C:pull_file:101:root@pam:",
+      "node": "pve",
+      "type": "pull_file",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790776636,
+      "endtime": 1790776636,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0005A736:09E281DE:6ABD145D:push_file:101:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790776413,
+      "endtime": 1790776413,
+      "status": "failed to open /tmp/02-npm-db.py for reading",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:0005A72E:09E2812D:6ABD145B:push_file:101:root@pam:",
+      "node": "pve",
+      "type": "push_file",
+      "id": "101",
+      "user": "root@pam",
+      "starttime": 1790776411,
+      "endtime": 1790776411,
+      "status": "failed to open /opt/nginx-proxy-manager/data/database.sqlite for reading",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:00059095:09E1311C:6ABD10FF:vncshell::root@pam:",
+      "node": "pve",
+      "type": "vncshell",
+      "id": "",
+      "user": "root@pam",
+      "starttime": 1790775551,
+      "endtime": 1790775658,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:00054B72:09DDA260:6ABD07E3:vncproxy:109:root@pam:",
+      "node": "pve",
+      "type": "vncproxy",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790773219,
+      "endtime": 1790818502,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:00054AF7:09DDA181:6ABD07E1:vzstart:109:root@pam:",
+      "node": "pve",
+      "type": "vzstart",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790773217,
+      "endtime": 1790773219,
+      "status": "OK",
+      "saved": "1"
+    },
+    {
+      "upid": "UPID:pve:00054A5A:09DD9B6B:6ABD07D1:vzcreate:109:root@pam:",
+      "node": "pve",
+      "type": "vzcreate",
+      "id": "109",
+      "user": "root@pam",
+      "starttime": 1790773201,
+      "endtime": 1790773213,
+      "status": "OK",
+      "saved": "1"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+# Services to watch, on LXC 109 (192.168.1.200).
+#
+# What a row means: "would a person be surprised".  So a red row has to mean a
+# person cannot get to the thing -- not merely that a container is up.
+#
+# Two shapes:
+#
+#   type: http   (default)  GET the url.
+#   type: tcp               open a socket to host:port, then close it.
+#
+# type: tcp exists because some targets have no HTTP answer worth reading.
+# rustdesk-server has no web endpoint at all, and hubrelay's status port wants a
+# bearer token and replies 401 without one -- which would be a permanently
+# yellow row meaning "we did not bring a token", not "the relay is down".  There
+# is deliberately no way to pass a header: a token in this file, read on every
+# request, is a secret in a place it should not be.
+#
+# Per service you may set:
+#   timeout          seconds to wait (default 3)
+#   warn_latency_ms  above this a success turns yellow (default 750)
+#   down_status      HTTP codes that mean "outage" rather than "answered badly"
+#                    (default 502, 503, 504 -- a gateway saying the thing behind
+#                    it is gone).  A 500 is deliberately NOT in the default: the
+#                    service answered, so it is a bug to look at, not a service
+#                    to panic about.  Ignored by type: tcp, which has no code.
+#
+# After editing: nothing to restart.  The dashboard re-reads this file on every
+# request.  If a row goes missing entirely, the panel shows the parse error.
+#
+# What is deliberately NOT here: Nextcloud (192.168.1.85) and the old WebServer
+# (192.168.1.195).  The owner uses the first only sometimes and the second not at
+# all, so a red row for either would be noise -- and noise is what makes people
+# stop looking at a dashboard.  Neither is behind NPM; add them as type: http if
+# that changes.
+
+services:
+  # Probed through NPM (CT 101) by public name, so a probe covers DNS -> router
+  # -> NPM -> the app.  That is the path a person actually takes, and an NPM
+  # problem shows up here instead of hiding behind a direct-IP probe that would
+  # stay green while nobody could reach anything.
+  - name: HomeAssistant
+    url: https://arctictong-ha.duckdns.org
+    timeout: 5
+    warn_latency_ms: 2000
+
+  - name: NoteApp
+    url: https://arctictong-notes.duckdns.org
+    timeout: 5
+
+  # hbbs registers clients on 21116; a completed connect is the whole question.
+  - name: RustDesk
+    type: tcp
+    host: 192.168.1.193
+    port: 21116
+
+  # A TCP connect proves the relay is listening, which is all this panel needs to
+  # say about it.
+  - name: hubrelay
+    type: tcp
+    host: 192.168.1.198
+    port: 8686

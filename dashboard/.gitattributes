@@ -1,0 +1,14 @@
+# The files under web/ are a build artefact copied off the server verbatim.
+# They must stay byte-identical to what nginx serves, so no CRLF conversion on
+# checkout: this Windows repo has core.autocrlf=true, which would otherwise
+# rewrite every line ending and make the copy in git a lie.
+web/** -text
+
+# The nginx site config is copied off the server verbatim too, and ticket 02
+# ships it to a Linux host.  Keep it LF for the same reason.
+nginx/*.conf -text
+
+# deploy.ps1 writes bash scripts to %TEMP% and hands them to `ssh bash -s`.
+# The script already strips CR before writing, but pinning LF here keeps the
+# working copy honest and silences the autocrlf warning on every diff.
+*.ps1 text eol=lf

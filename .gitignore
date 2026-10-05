@@ -1,0 +1,35 @@
+# Deploy tarballs are build artifacts, not source
+*.tgz
+*.tar.gz
+*.tar
+*.zip
+
+# --- sibling repositories -----------------------------------------------------
+# Each of these is a git repository with its own history and remote.  The workspace
+# repo is the doc/ops layer around them and must not embed a second copy: a file
+# tracked in two repositories drifts in one and not the other.
+tsguard/
+hsbridge/
+note-app/
+
+# Drop zone for files pulled off a server before they are organised into
+# source (see .scratch/ops-dashboard/issues/01-*.md) -- an intermediate, not a home
+incoming/
+
+# Python bytecode -- an interpreter's scratch, never source
+__pycache__/
+*.py[cod]
+
+# Local virtualenvs
+.venv/
+
+# --- runtime data and built output -------------------------------------------
+# A database export is live user data, not source, and it was tracked here once
+# (verified: 130 real notes).  A compiled binary is the output of a tree that is
+# already in the repo.  Both are regenerable or private, and neither belongs in
+# a history that gets pushed anywhere.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+hsbridge/release/server/hubrelay

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ops Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --up: #4ade80;
+      --warn: #fbbf24;
+      --down: #f87171;
+      --muted: #9aa0a6;
+      --line: #2a2a2a;
+      --panel: #161616;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 1.5rem;
+      background: #0f0f0f;
+      color: #e5e5e5;
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+    h1 { margin: 0; font-size: 1.4rem; }
+    .meta { color: var(--muted); font-size: .85rem; }
+    h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 .5rem; }
+    section { margin-bottom: 2rem; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    th, td { padding: .55rem .75rem; text-align: left; border-bottom: 1px solid var(--line); }
+    th { background: #1d1d1d; color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #1c1c1c; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    a { color: #7aa2f7; }
+    .dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; vertical-align: middle; margin-right: .45rem; }
+    .up { color: var(--up); } .up-bg { background: var(--up); }
+    .warn { color: var(--warn); } .warn-bg { background: var(--warn); }
+    .down { color: var(--down); } .down-bg { background: var(--down); }
+    .unknown { color: var(--muted); } .unknown-bg { background: var(--muted); }
+    .err { color: var(--down); background: #241616; border: 1px solid #4a2020; border-radius: 6px; padding: .6rem .8rem; font-size: .88rem; }
+    .note { color: var(--warn); background: #241f16; border: 1px solid #4a3f20; border-radius: 6px; padding: .6rem .8rem; font-size: .88rem; }
+    .counts { margin-left: auto; display: flex; gap: .9rem; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ops Dashboard</h1>
+    <span class="meta">updated <span id="stamp">{{ generated_at }}</span></span>
+    <span class="meta">refreshing every {{ refresh_ms // 1000 }}s</span>
+    <span class="counts">
+      {% set totals = {'up': 0, 'warn': 0, 'down': 0} %}
+      {% for s in services %}{% set _ = totals.update({s.state: totals[s.state] + 1}) %}{% endfor %}
+      <span class="up">▲ {{ totals.up }} up</span>
+      <span class="warn">▲ {{ totals.warn }} warn</span>
+      <span class="down">▲ {{ totals.down }} down</span>
+    </span>
+  </header>
+
+  <section>
+    <h2>Services</h2>
+    {% if services_error %}
+      <p class="err">cannot read {{ services_source }} &mdash; {{ services_error }}</p>
+    {% elif not services %}
+      <p class="meta">No services configured. Add them to <code>{{ services_source }}</code>.</p>
+    {% else %}
+      <table>
+        <thead><tr><th>Service</th><th>State</th><th>Code</th><th class="num">Latency</th><th>URL</th></tr></thead>
+        <tbody>
+        {% for s in services %}
+          <tr>
+            <td><span class="dot {{ s.state }}-bg"></span>{{ s.name }}</td>
+            <td class="{{ s.state }}">{{ s.state }}{% if s.error %} &mdash; {{ s.error }}{% endif %}</td>
+            <td>{{ s.status_code if s.status_code is not none else '&mdash;'|safe }}</td>
+            <td class="num">{{ s.latency_ms }} ms</td>
+            {# A tcp:// target has nothing to open in a browser, so it is shown
+               as text rather than a link that would do nothing when clicked. #}
+            <td>
+              {%- if s.url.startswith('http') -%}
+                <a href="{{ s.url }}" rel="noreferrer noopener" target="_blank">{{ s.url }}</a>
+              {%- else -%}
+                <code>{{ s.url }}</code>
+              {%- endif -%}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Nodes</h2>
+    {% if node_error %}
+      <p class="err">headscale: {{ node_error }}</p>
+    {% endif %}
+    <table>
+      <thead><tr><th>Node</th><th>State</th><th class="num">Last seen</th><th>Tailscale IP</th><th>Tags</th></tr></thead>
+      <tbody>
+      {% for n in nodes %}
+        <tr>
+          <td>{{ n.name }}</td>
+          <td class="{{ 'up' if n.online else 'down' }}">{{ 'online' if n.online else 'offline' }}</td>
+          <td class="num">{{ n.last_seen or 'unknown' }}</td>
+          <td>{{ n.ip or '&mdash;'|safe }}</td>
+          <td>{{ n.tags|join(', ') if n.tags else '' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="meta">No nodes reported.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Proxmox</h2>
+    {% if pve_error %}
+      <p class="err">pve: {{ pve_error }}</p>
+    {% else %}
+      {% if pve_backup_jobs == 0 %}
+        <p class="note">No backup job is configured on PVE &mdash; every guest below
+          reads "no recent backup" because nothing has ever been backed up. Creating
+          one under Datacenter &rarr; Backup is what makes this column mean something.</p>
+      {% endif %}
+      {# ``uptime_sec`` is null for a stopped guest: the cell prints a dash, never "0s". #}
+      <table>
+        <thead><tr><th>Guest</th><th class="num">ID</th><th>Type</th><th>State</th><th class="num">Uptime</th><th>Backup</th></tr></thead>
+        <tbody>
+        {% for g in pve_guests %}
+          <tr>
+            <td>{{ g.name or '&mdash;'|safe }}</td>
+            <td class="num">{{ g.vmid }}</td>
+            <td>{{ 'VM' if g.type == 'qemu' else 'LXC' }}</td>
+            <td class="{{ 'up' if g.status == 'running' else ('warn' if g.status in ('paused', 'suspended') else 'down') }}">{{ g.status }}</td>
+            <td class="num">{{ human_uptime(g.uptime_sec) or '&mdash;'|safe }}</td>
+            <td><span class="dot {{ 'up-bg' if g.backup_recent else 'down-bg' }}"></span>{{ 'recent' if g.backup_recent else 'none' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="meta">No guests reported.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
+  <script>
+  // Reload rather than re-fetch: the page is server-rendered, and a full reload
+  // is the only way to pick up config edits to services.yaml as well as data.
+  setTimeout(function () { location.reload(); }, {{ refresh_ms }});
+  </script>
+</body>
+</html>

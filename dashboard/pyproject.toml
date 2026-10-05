@@ -1,0 +1,55 @@
+[project]
+name = "ops-dashboard"
+version = "0.1.0"
+description = "Ops dashboard backend (API + static) for LXC 109"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+dependencies = [
+    "pydantic>=2.9",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "jinja2>=3.1",
+    "tzdata>=2024.2",
+]
+
+[project.scripts]
+dashboard = "dashboard.web.app:main"
+
+# Kept as an explicit list because deploy.ps1 installs from requirements.txt on
+# CT 109, where `pip install .` would need a build backend for one package that
+# is only ever run from a source directory.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dashboard"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# So `pytest` works from a clean checkout without an editable install or a
+# hand-set PYTHONPATH.
+pythonpath = ["src"]
+filterwarnings = [
+    "error",
+    # starlette's TestClient warns about httpx; that is starlette's call to make.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
