@@ -141,6 +141,8 @@ the first few weeks.
 updated, frame_time, radar_zoom, radar_tile_px, radar_mpp, view_km, base_zoom, radar_ok,
 rain_now, rain_near, rain_now_class, rain_now_label, rain_soon, rain_soon_in_min,
 rain_next_60min_mm, rain_past_60min_mm, approaching,
+rain_motion, rain_motion_moving, rain_motion_eta_min, rain_motion_speed_kmh,
+rain_motion_distance_km,
 coverage_30km, coverage_inner15km, trend_inner15km,
 rain_class_30km, rain_class_label, rain_class_label_en,
 rainviewer_nowcast, openmeteo_ok, om_models, om_need, om_votes, om_prob,
@@ -228,6 +230,35 @@ component, so there is no theme or HACS card to install:
 > not look at, so the view it added rendered nothing at all. If you ever rewrite
 > this, the shape is `sections: [{type: grid, cards: [...]}]`.
 
+## Where the rain is going
+
+`rain_motion` says whether the echo mass is moving and, if so, which way. It
+comes from sliding the older frame's echo mask over the newer one and taking
+the offset with the most overlap — a coarse phase correlation that survives
+more than one cell, which a centroid does not.
+
+**It refuses more often than it answers, on purpose.** Three cases produce no
+answer at all, and each has a reason:
+
+| case | what it reports |
+|---|---|
+| too little echo (< `RADAR_ECHO_MIN_CELLS`) | no answer |
+| the peak is a plateau — the mass shrank rather than moved | "นิ่ง (วัดการเคลื่อนที่ไม่ได้)" |
+| the shift does not beat standing still by `RADAR_ECHO_MIN_MARGIN` | "นิ่ง (วัดการเคลื่อนที่ไม่ได้)" |
+
+"Not moving" and "cannot tell" are different answers and only one of them
+justifies an arrival estimate. `rain_motion_eta_min` is therefore **-1** unless
+the mass is genuinely closing at a measurable speed and would arrive within
+`RADAR_MOTION_MAX_ETA`. When it is -1 the model consensus is what speaks, not a
+guess dressed as a measurement.
+
+Measured on one evening's convection over Bangkok: the echo grew 29 → 50 → 102
+cells then shrank 101 → 84 → 30, and **every consecutive pair had a margin of
+exactly zero** — the cells developed and dissipated in place. A pair 30 minutes
+apart did return motion (margin 6), which is why `RADAR_MOTION_GAP` defaults to
+3 frames rather than 1: over a single 10-minute step a convective cell can move
+less than the estimator resolves.
+
 ## Automations
 
 | Alias | Trigger |
@@ -307,6 +338,8 @@ the ones in the code.
 | `RADAR_ECHO_MIN_CELLS` | `6` | below this there is too little echo to answer |
 | `RADAR_ECHO_MIN_OVERLAP` | `6` | below this the match is a guess, so no answer is given |
 | `RADAR_ECHO_MIN_MARGIN` | `3` | cells a shift must explain beyond standing still, or the motion is called unmeasurable |
+| `RADAR_MOTION_GAP` | `3` | frames between the pair compared — 30 min usually clears the noise floor that one 10-minute step does not |
+| `RADAR_MOTION_MAX_ETA` | `90` | minutes; an arrival beyond this is not an arrival |
 
 **Run safety**
 

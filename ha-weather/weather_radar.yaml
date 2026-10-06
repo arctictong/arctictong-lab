@@ -145,6 +145,24 @@ command_line:
       unit_of_measurement: "mm"
       icon: mdi:history
       scan_interval: 300
+  # Where the echo mass is going. The ETA comes only from motion, so it is -1
+  # whenever the mass is stationary, receding or unmeasurable - the model
+  # consensus covers those cases rather than a guess being dressed up as one.
+  - sensor:
+      name: "Rain motion"
+      unique_id: rain_motion_text
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_motion | default('ไม่มีข้อมูล', true) }}"
+      icon: mdi:arrow-decision-outline
+      scan_interval: 300
+  - sensor:
+      name: "Rain motion eta"
+      unique_id: rain_motion_eta_min
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_motion_eta_min | default(-1, true) }}"
+      unit_of_measurement: "min"
+      icon: mdi:timer-sand
+      scan_interval: 300
   - sensor:
       name: "Radar zoom"
       unique_id: radar_zoom

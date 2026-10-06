@@ -1664,5 +1664,90 @@ class TestRainMotion(unittest.TestCase):
                 "bearing %d mapped wrong" % bearing)
 
 
+class TestMotionFramesAndEta(unittest.TestCase):
+    """motion_from_frames picks the pair; motion_eta_min decides whether an
+    arrival can be stated at all. The second is where the honesty lives: a
+    stationary, receding or unmeasurable mass has no arrival estimate, and
+    inventing one is the failure mode this whole ticket is written against."""
+
+    SIZE = 320
+    MPP = 300.0
+    GRID = 64
+
+    def _blob(self, cx, cy, r=40):
+        im = Image.new("RGBA", (self.SIZE, self.SIZE), (0, 0, 0, 0))
+        ImageDraw.Draw(im).ellipse([cx - r, cy - r, cx + r, cy + r],
+                                   fill=tuple(rn._RAMP[9]) + (255,))
+        return im
+
+    def _frames(self, steps):
+        """(time, image) pairs, the blob moved `steps` cells per frame."""
+        c = self.SIZE / 2.0
+        step = self.SIZE / float(self.GRID)
+        return [(1000 + i * 600, self._blob(c + dx * step, c))
+                for i, dx in enumerate(steps)]
+
+    def test_the_gap_chooses_the_pair(self):
+        """The blob moves between frames 0 and 1 and then holds still, so the
+        answer depends entirely on which pair the gap selects."""
+        frames = self._frames([0, 3, 3])
+        self.assertFalse(rn.motion_from_frames(frames, self.MPP, 1)["moving"],
+                         "gap 1 compared two frames that did not move")
+        out = rn.motion_from_frames(frames, self.MPP, 2)
+        self.assertTrue(out["moving"])
+        self.assertEqual(out["dx_cells"], 3)
+
+    def test_too_few_frames_is_no_answer(self):
+        self.assertIsNone(rn.motion_from_frames(self._frames([0, 0]),
+                                                self.MPP, 3))
+
+    def test_a_missing_timestamp_is_no_answer(self):
+        frames = self._frames([0, 3])
+        frames[0] = (None, frames[0][1])
+        self.assertIsNone(rn.motion_from_frames(frames, self.MPP, 1))
+
+    def test_a_zero_gap_is_refused(self):
+        self.assertIsNone(rn.motion_from_frames(self._frames([0, 3]),
+                                                self.MPP, 0))
+
+    def test_an_eta_needs_a_closing_mass(self):
+        self.assertEqual(rn.motion_eta_min(None), -1)
+        self.assertEqual(rn.motion_eta_min({"moving": False}), -1)
+        self.assertEqual(rn.motion_eta_min(
+            {"moving": True, "approach_kmh": -10, "distance_km": 12}), -1)
+        self.assertEqual(rn.motion_eta_min(
+            {"moving": True, "approach_kmh": 0, "distance_km": 12}), -1)
+        self.assertEqual(rn.motion_eta_min(
+            {"moving": True, "approach_kmh": 20, "distance_km": 0}), -1)
+
+    def test_a_closing_mass_gets_an_eta(self):
+        self.assertEqual(rn.motion_eta_min(
+            {"moving": True, "approach_kmh": 24.0, "distance_km": 12.0}), 30)
+
+    def test_an_eta_beyond_the_cap_is_not_an_eta(self):
+        far = {"moving": True, "approach_kmh": 2.0, "distance_km": 60.0}
+        self.assertEqual(rn.motion_eta_min(far), -1)
+        self.assertEqual(rn.motion_eta_min(far, max_min=2000), 1800)
+
+    def test_the_text_says_why_there_is_no_eta(self):
+        self.assertEqual(rn.motion_text(None), "ไม่มีข้อมูล")
+        self.assertIn("นิ่ง", rn.motion_text({"moving": False}))
+
+    def test_the_text_reports_an_arrival_when_there_is_one(self):
+        near = {"moving": True, "approach_kmh": 24.0, "distance_km": 12.0,
+                "speed_kmh": 25.0, "compass_th": "ตะวันตก", "toward_home": True}
+        self.assertIn("ตะวันตก", rn.motion_text(near))
+        self.assertIn("ถึงบ้านใน ~30 นาที", rn.motion_text(near))
+
+    def test_the_text_distinguishes_closing_from_arriving(self):
+        base = {"moving": True, "approach_kmh": 24.0, "distance_km": 12.0,
+                "speed_kmh": 25.0, "compass_th": "ตะวันตก", "toward_home": True}
+        self.assertIn("กำลังเข้ามาทางบ้าน",
+                      rn.motion_text(dict(base, distance_km=200.0)))
+        self.assertIn("ไม่ได้เข้ามาทางบ้าน",
+                      rn.motion_text(dict(base, toward_home=False,
+                                          approach_kmh=-5.0)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

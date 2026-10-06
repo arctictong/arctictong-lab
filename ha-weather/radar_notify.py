@@ -415,6 +415,12 @@ ECHO_MIN_OVERLAP = int(os.environ.get("RADAR_ECHO_MIN_OVERLAP", "6"))
 # or it is not believed: a shrinking mass makes the peak a plateau, and the
 # motion is then unmeasurable rather than zero.
 ECHO_MIN_MARGIN = int(os.environ.get("RADAR_ECHO_MIN_MARGIN", "3"))
+# How many frames apart to compare. Measured on real data: over one 10-minute
+# step a convective cell can move less than the estimator resolves, so the
+# measurement says nothing; 30 minutes usually clears that floor.
+MOTION_GAP_FRAMES = int(os.environ.get("RADAR_MOTION_GAP", "3"))
+# An arrival beyond this is not an arrival, it is a different weather day.
+MOTION_MAX_ETA_MIN = int(os.environ.get("RADAR_MOTION_MAX_ETA", "90"))
 COMPASS_TH = ["เหนือ", "ตะวันออกเฉียงเหนือ", "ตะวันออก", "ตะวันออกเฉียงใต้",
               "ใต้", "ตะวันตกเฉียงใต้", "ตะวันตก", "ตะวันตกเฉียงเหนือ"]
 COMPASS_EN = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
@@ -549,6 +555,61 @@ def rain_motion(img_a, img_b, mpp, dt_s, grid=None):
         "approach_kmh": round(approach, 1),
         "toward_home": approach > 0,
     }
+
+
+def motion_from_frames(frames, mpp, gap=None):
+    """Motion between the newest frame and one `gap` frames older.
+
+    `frames` is [(time, image), ...] oldest first, which is what the trend loop
+    already builds - so this costs no extra fetches. The gap is deliberate: a
+    single 10-minute step is often below the estimator's resolution, and a
+    measurement that cannot see the motion is worse than none.
+    """
+    gap = MOTION_GAP_FRAMES if gap is None else gap
+    if gap < 1 or len(frames) < gap + 1:
+        return None
+    t_a, img_a = frames[-(gap + 1)]
+    t_b, img_b = frames[-1]
+    if not t_a or not t_b or t_b <= t_a:
+        return None
+    return rain_motion(img_a, img_b, mpp, t_b - t_a)
+
+
+def motion_eta_min(motion, max_min=None):
+    """Minutes until the mass reaches home, or -1 when it cannot be said.
+
+    Only ever from motion, and only while the mass is actually closing. A
+    stationary, receding or unmeasurable mass has no motion ETA - the model
+    consensus is what covers that case - and anything beyond `max_min` is not
+    an arrival estimate, it is a different weather situation.
+    """
+    max_min = MOTION_MAX_ETA_MIN if max_min is None else max_min
+    if not motion or not motion.get("moving"):
+        return -1
+    approach = motion.get("approach_kmh") or 0.0
+    gap = motion.get("distance_km")
+    if approach <= 0 or gap is None or gap <= 0:
+        return -1
+    minutes = gap / approach * 60.0
+    if minutes > max_min:
+        return -1
+    return int(round(minutes))
+
+
+def motion_text(motion):
+    """A short Thai description of the motion, or why there is not one."""
+    if not motion:
+        return "ไม่มีข้อมูล"
+    if not motion.get("moving"):
+        return "นิ่ง (วัดการเคลื่อนที่ไม่ได้)"
+    head = "เคลื่อน %s %.0f กม./ชม." % (motion["compass_th"],
+                                        motion["speed_kmh"])
+    eta = motion_eta_min(motion)
+    if eta >= 0:
+        return "%s · ถึงบ้านใน ~%d นาที" % (head, eta)
+    if motion.get("toward_home"):
+        return "%s · กำลังเข้ามาทางบ้าน" % head
+    return "%s · ไม่ได้เข้ามาทางบ้าน" % head
 
 
 def home_class(tile_url, z, cx, cy, mpp, tpx=TILE, radius_m=None):
@@ -1054,6 +1115,7 @@ def build():
     cover30 = inner15 = 0.0
     cls30 = 0
     trend = None
+    motion = None
     rain_now = False
     rain_near = False
     now_cls = -1
@@ -1084,11 +1146,15 @@ def build():
         tcx, tcy = latlon_to_world_px(HOME_LAT, HOME_LON, zoom, ts_px)
         tmpp = meters_per_pixel(HOME_LAT, zoom, ts_px)
         olds, inner_now = [], None
+        # the mosaics are kept so the motion estimate can reuse them: it costs
+        # no extra fetches, and the trend loop is already building the frames
+        trend_frames = []
         for f in past[-(TREND_FRAMES + 1):]:
             t2 = ("%s%s/%d_%d/{z}/{x}/{y}/%s/%s.png"
                   % (host, f["path"], ts_px, ts_px, PALETTE, SCHEME))
             try:
                 im, _ = mosaic(t2, zoom, tcx, tcy, tsize, ts_px)
+                trend_frames.append((f.get("time"), im))
                 v = class_histogram(im, tmpp, [(0.0, INNER_KM, "i")],
                                     grid=256)["i"]["pct"]
                 if f is past[-1]:
@@ -1100,6 +1166,8 @@ def build():
         if olds and inner_now is not None:
             trend = round(inner_now - min(olds), 2)
             log("trend inner15: past=%s now=%.2f delta=%s" % (olds, inner_now, trend))
+        motion = motion_from_frames(trend_frames, tmpp)
+        log("motion: %s" % motion_text(motion))
 
     om = openmeteo_nowcast()
     rain_soon = bool(om["rain_soon"])
@@ -1229,6 +1297,14 @@ def build():
         "coverage_30km": cover30,
         "coverage_inner15km": inner15,
         "trend_inner15km": trend,
+        # motion, and the arrival estimate that comes only from it: a mass that
+        # is stationary, receding or unmeasurable has no motion ETA, and the
+        # model consensus is what covers those cases
+        "rain_motion": motion_text(motion),
+        "rain_motion_moving": bool(motion and motion.get("moving")),
+        "rain_motion_eta_min": motion_eta_min(motion),
+        "rain_motion_speed_kmh": (motion or {}).get("speed_kmh", -1),
+        "rain_motion_distance_km": (motion or {}).get("distance_km", -1),
         "rain_class_30km": cls30,
         "rain_class_label": LEVEL_TH[cls30],
         "rain_class_label_en": LEVEL_EN[cls30],

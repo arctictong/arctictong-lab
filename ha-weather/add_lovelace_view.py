@@ -205,6 +205,8 @@ VIEW_TECH = {
                  {"entity": "binary_sensor.radar_rain_now", "name": "ฝนตกที่บ้าน (700 ม.)"},
                  {"entity": "binary_sensor.radar_echo_near", "name": "กลุ่มฝนใกล้บ้าน (1.5 กม.)"},
                  {"entity": "binary_sensor.radar_rain_approaching", "name": "ฝนกำลังมา"},
+                 {"entity": "sensor.rain_motion", "name": "การเคลื่อนที่ของกลุ่มฝน"},
+                 {"entity": "sensor.rain_motion_eta", "name": "ถึงบ้านใน (นาที, -1 = ไม่มี)"},
                  {"entity": "binary_sensor.rain_soon", "name": "โมเดลเห็นฝนใน 2 ชม."},
                  {"entity": "sensor.rain_soon_in_min",
                   "name": "ฝนมาในอีก (นาที, -1 = ไม่มีข้อมูล)"},
