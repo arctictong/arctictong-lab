@@ -13,7 +13,7 @@ Alert radius: **30 km** (solid ring) plus a **10 km** dashed inner ring and scal
 | `radar_notify.py` | Runs inside the HA Core container. Builds `/local/radar/latest.png` + `summary.json`. |
 | `weather_radar.yaml` | HA package: `shell_command`, all `command_line` sensors, REST sensors for PM2.5/rain, thresholds. |
 | `make_automations.py` | Creates/updates the 7 automations with Thai Telegram captions. |
-| `add_lovelace_view.py` | Adds the "ฝน & อากาศ" Lovelace view (idempotent, keeps existing views). |
+| `add_lovelace_view.py` | Adds the "ฝน & อากาศ" view and its technical subview (idempotent: replaces only the views it owns). |
 | `test_radar_notify.py` | 106 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, the run time budget, the model consensus, the verification log, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
 | `test_captions.py` | 34 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`, `unavailable`) can reach a message from a TMD **or** a PM2.5/rain/Open-Meteo sensor. |
 | `test_score_forecast.py` | 24 offline tests: the verification label (gaps and the log end are *unknown*, not dry), the two prediction thresholds, the majority rule, all four confusion counts, and a torn log line being skipped. |
@@ -193,6 +193,39 @@ python add_lovelace_view.py
 endpoints. Any token that has been pasted into a chat or committed once is
 compromised and **must be revoked** — removing it from a later commit does not
 remove it from git history.
+
+## Dashboard
+
+The view is built by `add_lovelace_view.py`, which replaces only the views it
+owns (matched by `path`) and leaves every other view alone.
+
+- **`ha-weather`** — the radar first, then one status sentence, then the two
+  numbers that get asked for most (rain in the next hour, PM2.5). Everything
+  else is a labelled row on the same page; the technical fields are not here.
+- **`ha-weather-tech`** — a subview for `radar_zoom`, the raw signal flags and
+  the model agreement. Reached from a button at the bottom of the main view, so
+  a sentinel such as `-1` is never on the wall.
+
+`max_columns: 2` is what makes it work on both: Home Assistant pairs the two
+sections on a desktop and stacks them on a phone from the same config.
+
+The status sentence is one markdown card whose wording **and colour** match the
+Telegram captions, so the two never disagree about what the state is called.
+The colour comes from `<ha-alert alert-type=...>`, a core Home Assistant
+component, so there is no theme or HACS card to install:
+
+| state | alert-type | sentence |
+|---|---|---|
+| nothing nearby | *(plain text)* | ยังไม่มีฝนที่บ้าน |
+| echo within 1.5 km | `warning` | ตรวจพบกลุ่มฝนใกล้บ้าน |
+| model consensus only | `warning` | คาดว่าฝนจะมา |
+| echo over the house | `info` | ฝนตกที่บ้านตอนนี้ |
+| HII flash-flood watch | `error` | เฝ้าระวังน้ำท่วมฉับพลัน |
+
+> **A sections view reads `sections`, not `cards`.** The first version of this
+> script wrote `cards` on a `type: sections` view, which that view type does
+> not look at, so the view it added rendered nothing at all. If you ever rewrite
+> this, the shape is `sections: [{type: grid, cards: [...]}]`.
 
 ## Automations
 
