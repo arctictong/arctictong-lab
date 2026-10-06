@@ -110,6 +110,31 @@ command_line:
       value_template: "{{ value_json.rain_now_label | default('ไม่มีฝน', true) }}"
       icon: mdi:home-thermometer-outline
       scan_interval: 300
+  # The model consensus, so the dashboard can show *how sure* the nowcast is
+  # rather than only what it decided. -1 reads as "no consensus", which the
+  # cards treat as unknown rather than as zero.
+  - sensor:
+      name: "Rain models agree"
+      unique_id: rain_models_agree
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ (value_json.om_votes | default([-1], true)) | max }}"
+      icon: mdi:account-group-outline
+      scan_interval: 300
+  - sensor:
+      name: "Rain models total"
+      unique_id: rain_models_total
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.om_models | default(0, true) }}"
+      icon: mdi:account-multiple-outline
+      scan_interval: 300
+  - sensor:
+      name: "Rain chance"
+      unique_id: rain_chance_pct
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.om_prob | default(-1, true) }}"
+      unit_of_measurement: "%"
+      icon: mdi:percent-outline
+      scan_interval: 300
   - sensor:
       name: "Radar zoom"
       unique_id: radar_zoom

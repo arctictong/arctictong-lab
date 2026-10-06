@@ -1022,7 +1022,8 @@ class TestYamlSentinels(unittest.TestCase):
     HERE = os.path.dirname(os.path.abspath(__file__))
     # every summary.json key that can be null when its source fails
     NULLABLE = ["radar_zoom", "rain_next_60min_mm", "tmd_24h_rain_pct",
-                "tmd_7d_rain_pct", "tmd_24h", "tmd_7d_desc", "tmd_warning"]
+                "tmd_7d_rain_pct", "tmd_24h", "tmd_7d_desc", "tmd_warning",
+                "om_votes", "om_models", "om_prob"]
 
     def _yaml(self):
         with open(os.path.join(self.HERE, "weather_radar.yaml"),
