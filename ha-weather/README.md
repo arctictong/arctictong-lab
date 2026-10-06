@@ -14,13 +14,15 @@ Alert radius: **30 km** (solid ring) plus a **10 km** dashed inner ring and scal
 | `weather_radar.yaml` | HA package: `shell_command`, all `command_line` sensors, REST sensors for PM2.5/rain, thresholds. |
 | `make_automations.py` | Creates/updates the 7 automations with Thai Telegram captions. |
 | `add_lovelace_view.py` | Adds the "ฝน & อากาศ" Lovelace view (idempotent, keeps existing views). |
-| `test_radar_notify.py` | 77 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, the run time budget, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
-| `test_captions.py` | 23 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`, `unavailable`) can reach a message from a TMD **or** a PM2.5/rain/Open-Meteo sensor. |
+| `test_radar_notify.py` | 106 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, the run time budget, the model consensus, the verification log, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
+| `test_captions.py` | 34 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`, `unavailable`) can reach a message from a TMD **or** a PM2.5/rain/Open-Meteo sensor. |
+| `test_score_forecast.py` | 24 offline tests: the verification label (gaps and the log end are *unknown*, not dry), the two prediction thresholds, the majority rule, all four confusion counts, and a torn log line being skipped. |
+| `score_forecast.py` | Scores each Open-Meteo model against what actually happened. Run it on the HA host or offline; see "Which model is right". |
 | `fonts/Sarabun-*.ttf` | Thai+Latin font so the image can render Thai labels. |
 
-Run the tests with `python test_radar_notify.py; python test_captions.py`
-(neither touches the network or Home Assistant; `test_captions.py` needs
-`jinja2`, which HA already ships).
+Run the tests with `python test_radar_notify.py; python test_captions.py;
+python test_score_forecast.py` — they touch neither the network nor Home
+Assistant (`test_captions.py` needs `jinja2`, which HA already ships).
 
 ## Data sources
 
@@ -34,7 +36,7 @@ Run the tests with `python test_radar_notify.py; python test_captions.py`
 | Official forecast | **TMD (กรมฝนหลวง)** `data.tmd.go.th/api/` with the public demo credentials `uid=api&ukey=api12345` | 24 h Bangkok narrative + %rain, 7-day %rain, official warnings |
 | Flash-flood watch | HII `api.hii.or.th` `warning/flashflood-24h` | tri-state: a failed fetch is *unknown*, so the previous value is held rather than reported as "no watch" |
 | PM2.5 | Open-Meteo air quality (at home) + PCD Air4Thai station `bkp77t` (`verify_ssl: false`) | GISTDA is behind Incapsula, not used |
-| Rain 24 h | ThaiWater `api-v3.thaiwater.net` station `BKK021` | |
+| Rain 24 h | ThaiWater `api-v3.thaiwater.net` station `BKK021` | a real gauge ~7.8 km away. Also read by `radar_notify.py` itself so the verification log is self-contained |
 
 ## Rain intensity levels
 
@@ -94,6 +96,44 @@ The strongest class inside the 30 km ring is exposed as
 > `rain_class_30km` is a **maximum** over a 30 km disc, so a single cell of
 > intense rain reports ฝนรุนแรง even when the disc is 99 % clear. 3 of 12
 > archived frames now report class 5 where the old, mis-ranked code reported 4.
+
+## Which model is right
+
+The nowcast is a **majority vote of three Open-Meteo models over a 3x3
+neighbourhood** (see the constants at the top of `radar_notify.py`). A single
+model at a single point is a poor estimator for Thai rain: a Bangkok convective
+cell is 5-15 km across while a model grid box is 13-25 km. Measured at one
+moment, same point:
+
+| | next 2 h, per 15 min |
+|---|---|
+| `best_match`, single point (previously) | `[0,0,0,0,0,0,0,0]` → **dry** |
+| 3 models, 9 points (now) | `[3,3,3,3,3,3,3,3]` → **rain now, 0.6 mm/h, 90 %** |
+
+The old configuration missed rain that was falling. The models are
+`ecmwf_ifs025`, `icon_seamless` and `gfs_seamless`; **JMA is deliberately
+absent** because it is the coarsest (~55 km) and publishes no
+`precipitation_probability` at 15-minute resolution.
+
+But *which* three is an assumption, so the system collects the evidence to
+check it. Every build appends a line to `forecast_log.jsonl` with each model's
+own next-hour numbers plus two independent observations, and
+`score_forecast.py` turns that into per-model truth counts:
+
+```bash
+python score_forecast.py /config/www/radar/forecast_log.jsonl
+python score_forecast.py --min-hours 200        # refuse to rank before then
+```
+
+**Read the caveats before trusting the output.** The label is the **radar**, not
+the gauge — it is independent of the models, which is what makes the comparison
+meaningful, but it sees the beam and not the raingauge. The ThaiWater gauge is a
+**rolling 24 h total**, so only a *positive* change between two reads confirms
+rain; a zero change does not prove it stayed dry, so the gauge corroborates
+events and never scores dry hours. And a window needs five contiguous records:
+a missed build makes the hour *unknown* and the window is skipped, so an outage
+is never counted as a model success. Expect the ranking to be meaningless for
+the first few weeks.
 
 ## summary.json fields
 
