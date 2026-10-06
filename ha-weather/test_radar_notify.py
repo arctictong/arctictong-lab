@@ -737,35 +737,215 @@ class TestHiiTriState(unittest.TestCase):
                         "an HII outage cleared a standing flood watch")
 
 
-class TestOpenMeteoSentinel(unittest.TestCase):
-    """Open-Meteo going down must not write null for the rainfall total: a null
-    reaches sensor.rain_next_60min_mm as the literal string "None"."""
+def om_payload(rows_spec, slots=8, models=None):
+    """Build the response Open-Meteo returns for several points.
+
+    rows_spec: one dict per point, {model: {"mm": [...], "prob": [...]}}.
+    Home is the middle row, matching om_points().
+    """
+    models = models or list(rn.OM_MODELS)
+    out = []
+    for spec in rows_spec:
+        m15 = {"time": ["t%d" % i for i in range(slots)]}
+        for model in models:
+            s = spec.get(model) or {}
+            m15["precipitation_%s" % model] = (
+                s.get("mm") or [0.0] * slots)
+            m15["precipitation_probability_%s" % model] = (
+                s.get("prob") or [0.0] * slots)
+        out.append({"minutely_15": m15})
+    return out
+
+
+def om_rows(home, neighbours=None, slots=8, n=9):
+    """9 rows with `home` in the middle and `neighbours` elsewhere."""
+    rows = [neighbours or {} for _ in range(n)]
+    rows[n // 2] = home
+    return om_payload(rows, slots=slots)
+
+
+class TestOmConsensus(unittest.TestCase):
+    """The rule the whole nowcast rests on. A single model at a single point is
+    a bad estimator for a 5-15 km convective cell, so the decision is a
+    neighbourhood majority - and each half of that needs pinning down."""
+
+    MODELS = ("ecmwf_ifs025", "icon_seamless", "gfs_seamless")
+
+    def _one(self, model, mm=None, prob=None, slots=8):
+        return {model: {"mm": mm or [0.0] * slots,
+                        "prob": prob or [0.0] * slots}}
+
+    def test_a_majority_of_models_triggers(self):
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0.5] * 8))
+        home.update(self._one("icon_seamless", mm=[0.5] * 8))
+        home.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertTrue(out["ok"])
+        self.assertTrue(out["rain_soon"])
+        self.assertEqual(out["minutes"], 0)
+
+    def test_one_model_alone_is_not_enough(self):
+        """The majority rule: one outlier model must not raise an alert."""
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0.5] * 8))
+        home.update(self._one("icon_seamless", mm=[0.0] * 8))
+        home.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertFalse(out["rain_soon"], "a single model raised the alert")
+        self.assertEqual(out["votes"][0], 1)
+
+    def test_high_probability_alone_counts_as_rain(self):
+        """Two models with no amount but a real chance: that is rain for
+        alerting purposes, which is the point of the OR."""
+        home = {}
+        home.update(self._one("ecmwf_ifs025", prob=[70] * 8))
+        home.update(self._one("icon_seamless", prob=[60] * 8))
+        home.update(self._one("gfs_seamless", prob=[10] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertTrue(out["rain_soon"])
+        self.assertEqual(out["prob"], 70)
+
+    def test_low_probability_and_no_amount_is_dry(self):
+        home = {}
+        home.update(self._one("ecmwf_ifs025", prob=[40] * 8))
+        home.update(self._one("icon_seamless", prob=[45] * 8))
+        home.update(self._one("gfs_seamless", prob=[30] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertFalse(out["rain_soon"])
+
+    def test_a_neighbour_can_supply_the_rain(self):
+        """Home is dry but a point 5 km away is wet, for two models. That is
+        exactly the convective case the neighbourhood exists for."""
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0.0] * 8))
+        home.update(self._one("icon_seamless", mm=[0.0] * 8))
+        home.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        nb = {}
+        nb.update(self._one("ecmwf_ifs025", mm=[0.4] * 8))
+        nb.update(self._one("icon_seamless", mm=[0.4] * 8))
+        nb.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        out = rn.om_consensus(om_rows(home, nb), self.MODELS, 2)
+        self.assertTrue(out["rain_soon"],
+                        "a wet neighbour was ignored at home")
+
+    def test_the_amount_is_measured_at_home_not_the_neighbourhood(self):
+        """'How much will fall at the house' is a point question. The mean is
+        taken at home even when the neighbourhood is what triggered."""
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0.0] * 8))
+        home.update(self._one("icon_seamless", mm=[0.0] * 8))
+        home.update(self._one("gfs_seamless", mm=[2.0] * 8))
+        nb = {}
+        nb.update(self._one("ecmwf_ifs025", mm=[9.0] * 8))
+        nb.update(self._one("icon_seamless", mm=[9.0] * 8))
+        nb.update(self._one("gfs_seamless", mm=[9.0] * 8))
+        out = rn.om_consensus(om_rows(home, nb), self.MODELS, 2)
+        # home mean over the first hour = (0 + 0 + 2.0*4) / 3
+        self.assertAlmostEqual(out["mm60"], round(8.0 / 3, 2), places=2)
+
+    def test_the_first_agreeing_slot_is_the_eta(self):
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0, 0, 0, 0.5, 0.5, 0.5, 0, 0]))
+        home.update(self._one("icon_seamless", mm=[0, 0, 0, 0.5, 0.5, 0.5, 0, 0]))
+        home.update(self._one("gfs_seamless", mm=[0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertEqual(out["minutes"], 45)
+
+    def test_no_rain_reports_no_eta(self):
+        home = {}
+        for m in self.MODELS:
+            home.update(self._one(m, mm=[0.0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertFalse(out["rain_soon"])
+        self.assertIsNone(out["minutes"])
+        self.assertEqual(out["votes"], [0] * 8)
+
+    def test_a_null_series_reads_as_dry(self):
+        """Open-Meteo returns null for a model with no 15-minute data. That
+        must read as no rain, not raise."""
+        rows = om_rows({})
+        for row in rows:
+            row["minutely_15"]["precipitation_ecmwf_ifs025"] = [None] * 8
+            row["minutely_15"]["precipitation_probability_ecmwf_ifs025"] = \
+                [None] * 8
+        home = {}
+        home.update(self._one("icon_seamless", mm=[0.5] * 8))
+        home.update(self._one("gfs_seamless", mm=[0.5] * 8))
+        rows[4] = om_payload([home])[0]
+        out = rn.om_consensus(rows, self.MODELS, 2)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["votes"][0], 2)
+
+    def test_an_empty_response_is_not_ok(self):
+        for bad in ([], [{}], [{"minutely_15": {}}],
+                    [{"minutely_15": {"time": []}}]):
+            with self.subTest(response=bad):
+                out = rn.om_consensus(bad, self.MODELS, 2)
+                self.assertFalse(out["ok"])
+
+    def test_the_need_threshold_is_configurable(self):
+        home = {}
+        home.update(self._one("ecmwf_ifs025", mm=[0.5] * 8))
+        home.update(self._one("icon_seamless", mm=[0.0] * 8))
+        home.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        rows = om_rows(home)
+        self.assertFalse(rn.om_consensus(rows, self.MODELS, 2)["rain_soon"])
+        self.assertTrue(rn.om_consensus(rows, self.MODELS, 1)["rain_soon"])
+
+
+class TestOpenMeteoNowcast(unittest.TestCase):
+    """openmeteo_nowcast wraps om_consensus with the HTTP call and the failure
+    sentinels. A null must never reach sensor.rain_next_60min_mm: command_line
+    renders it as the literal string "None"."""
 
     def test_failure_uses_the_mm_sentinel(self):
         orig = rn.fetch
         rn.fetch = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
         try:
-            soon, minutes, mm60, ok = rn.openmeteo_nowcast()
+            out = rn.openmeteo_nowcast()
         finally:
             rn.fetch = orig
-        self.assertFalse(ok)
-        self.assertEqual(mm60, -1, "a null would render as the string None")
-        self.assertIsNone(minutes,
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["mm60"], -1, "a null would render as the string None")
+        self.assertIsNone(out["minutes"],
                           "minutes must stay None so a radar ETA can still win")
 
-    def test_a_dry_forecast_is_zero_not_a_sentinel(self):
-        payload = json.dumps({"minutely_15": {
-            "precipitation": [0, 0, 0, 0, 0, 0]}}).encode("utf-8")
+    def test_the_request_asks_for_models_and_a_neighbourhood(self):
+        """Pin the URL: multi-model, probability, and 9 points is the whole
+        point of the change."""
+        seen = {}
+
+        def grab(url, timeout=45):
+            seen["url"] = url
+            return json.dumps(om_rows({})).encode("utf-8")
+
         orig = rn.fetch
-        rn.fetch = lambda *a, **k: payload
+        rn.fetch = grab
         try:
-            soon, minutes, mm60, ok = rn.openmeteo_nowcast()
+            rn.openmeteo_nowcast()
         finally:
             rn.fetch = orig
-        self.assertTrue(ok)
-        self.assertFalse(soon)
-        self.assertEqual(mm60, 0.0)
-        self.assertIsNone(minutes)
+        url = seen["url"]
+        for model in rn.OM_MODELS:
+            self.assertIn(model, url)
+        self.assertIn("precipitation_probability", url)
+        self.assertIn("minutely_15", url)
+        lat = url.split("latitude=")[1].split("&")[0]
+        self.assertEqual(len(lat.split(",")), len(rn.om_points()),
+                         "the request no longer samples a neighbourhood")
+
+    def test_a_dry_forecast_is_zero_not_a_sentinel(self):
+        orig = rn.fetch
+        rn.fetch = lambda *a, **k: json.dumps(om_rows({})).encode("utf-8")
+        try:
+            out = rn.openmeteo_nowcast()
+        finally:
+            rn.fetch = orig
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["rain_soon"])
+        self.assertEqual(out["mm60"], 0.0)
+        self.assertIsNone(out["minutes"])
 
 
 class TestYamlSentinels(unittest.TestCase):
@@ -943,9 +1123,11 @@ class TestDeadNowcastPathRemoved(unittest.TestCase):
         silently ignored."""
         self.assertIn("rainviewer_nowcast", self._src())
 
-    def test_rain_soon_comes_from_open_meteo_alone(self):
+    def test_rain_soon_comes_from_the_model_consensus(self):
+        """RainViewer's nowcast frames are gone, so the model consensus is the
+        only ETA source - and it is read from the dict, not a tuple."""
         src = self._src()
-        self.assertIn("rain_soon = om_soon", src)
+        self.assertIn('rain_soon = bool(om["rain_soon"])', src)
 
 
 class TestRunBudget(unittest.TestCase):

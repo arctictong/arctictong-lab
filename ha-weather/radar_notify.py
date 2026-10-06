@@ -66,8 +66,37 @@ UA = "ha-home-weather-radar/2.0 (personal home automation)"
 
 BASE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 RV_INDEX = "https://api.rainviewer.com/public/weather-maps.json"
+# Open-Meteo nowcast: several models and a small neighbourhood, all in one
+# request (verified: 9 points x 3 models x 2 variables fits in a ~430 char URL).
+#
+# A single model at a single point is a bad estimator for Thai rain. Bangkok
+# convection is a 5-15 km cell, while a model grid box is 13-25 km, so one grid
+# point either has the cell or does not. Measured one afternoon: best_match
+# said 0.0 mm while JMA said 0.2 and ICON 0.3 at the same point, and a
+# neighbouring point read 0.2 where home read 0.0.
+#
+# JMA is deliberately absent: it is the coarsest (~55 km) and publishes no
+# precipitation_probability at 15-minute resolution - its series comes back
+# null - so it cannot take part in the probability test.
+OM_MODELS = tuple(os.environ.get(
+    "RADAR_OM_MODELS", "ecmwf_ifs025,icon_seamless,gfs_seamless").split(","))
+OM_CONSENSUS = int(os.environ.get("RADAR_OM_CONSENSUS", "2"))   # majority of 3
+OM_RAIN_MM15 = float(os.environ.get("RADAR_OM_RAIN_MM15", "0.1"))  # mm / 15 min
+OM_PROB_PCT = float(os.environ.get("RADAR_OM_PROB_PCT", "50"))     # percent
+OM_NEIGHBOUR_DEG = float(os.environ.get("RADAR_OM_NEIGHBOUR", "0.05"))  # ~5.5 km
+OM_HORIZON_SLOTS = int(os.environ.get("RADAR_OM_HORIZON", "8"))    # 2 hours
 OM_URL = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-          "&minutely_15=precipitation&forecast_minutely_15=8&timezone=Asia%2FBangkok")
+          "&minutely_15=precipitation,precipitation_probability"
+          "&forecast_minutely_15=" + str(OM_HORIZON_SLOTS)
+          + "&models=" + ",".join(OM_MODELS)
+          + "&timezone=Asia%2FBangkok")
+
+
+def om_points():
+    """3x3 grid of query points around home, home itself in the middle."""
+    d = OM_NEIGHBOUR_DEG
+    return [(HOME_LAT + dy, HOME_LON + dx)
+            for dy in (-d, 0.0, d) for dx in (-d, 0.0, d)]
 TMD_BASE = "https://data.tmd.go.th/api/%s/v%s/?uid=api&ukey=api12345"
 HII_FF24 = ("https://api.hii.or.th/v2/4UQaYnf0Bx4fXPYyCdDRbqHyXH9Ixvd2nVUjaN1cLBY="
             "/warning/flashflood-24h")
@@ -436,24 +465,100 @@ def pick_tile_size(make_url, z, tx, ty):
     return TILE
 
 
+def _om_val(row, key, i):
+    """Value at slot i, or 0.0 when the series is absent or null there.
+
+    Open-Meteo returns null for a model that has no data at 15-minute
+    resolution, so a missing series must read as "no rain", not crash.
+    """
+    series = (row.get("minutely_15") or {}).get(key)
+    if not series or i >= len(series):
+        return 0.0
+    v = series[i]
+    return 0.0 if v is None else float(v)
+
+
+def om_consensus(rows, models=None, need=None):
+    """Collapse the Open-Meteo response into one nowcast decision.
+
+    `rows` is the list of per-point responses; home is the middle one.
+
+    For each 15-minute slot a model counts as predicting rain when *any* point
+    in the neighbourhood shows at least OM_RAIN_MM15 of precipitation, or at
+    least OM_PROB_PCT chance of it. Rain is then expected for the slot when at
+    least `need` models agree - the majority rule, so one outlier model cannot
+    raise an alert on its own.
+
+    The amount is a separate question and is answered at home, not across the
+    neighbourhood: `mm60` is the multi-model mean over the first hour, because
+    "how much at the house" is a point question and the mean is the standard
+    ensemble estimate.
+
+    Returns a dict; ok is False when the response holds nothing usable.
+    """
+    models = list(models or OM_MODELS)
+    need = OM_CONSENSUS if need is None else need
+    empty = {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
+             "prob": None, "votes": [], "models": len(models), "need": need}
+    if not rows:
+        return empty
+    series = (rows[0].get("minutely_15") or {})
+    n = len(series.get("time") or [])
+    if not n:
+        return empty
+
+    home = rows[len(rows) // 2]
+    votes = []
+    for i in range(n):
+        c = 0
+        for m in models:
+            amt = "precipitation_%s" % m
+            prb = "precipitation_probability_%s" % m
+            if any(_om_val(r, amt, i) >= OM_RAIN_MM15
+                   or _om_val(r, prb, i) >= OM_PROB_PCT for r in rows):
+                c += 1
+        votes.append(c)
+
+    first = next((i for i, v in enumerate(votes) if v >= need), None)
+    mm60 = round(sum(_om_val(home, "precipitation_%s" % m, i)
+                     for m in models for i in range(min(4, n)))
+                 / max(1, len(models)), 2)
+    prob = max((_om_val(home, "precipitation_probability_%s" % m, i)
+                for m in models for i in range(n)), default=0.0)
+    return {"ok": True,
+            "rain_soon": first is not None,
+            "minutes": None if first is None else first * 15,
+            "mm60": mm60,
+            "prob": int(prob),
+            "votes": votes,
+            "models": len(models),
+            "need": need}
+
+
 def openmeteo_nowcast():
+    """Open-Meteo nowcast: a neighbourhood consensus of several models.
+
+    Returns the dict from om_consensus(). On failure mm60 becomes the -1
+    sentinel rather than null, because command_line renders a null as the
+    literal string "None" on sensor.rain_next_60min_mm; minutes stays None
+    because a radar estimate also competes for the earliest ETA and -1 would
+    win that comparison.
+    """
+    pts = om_points()
+    url = OM_URL.format(lat=",".join("%.6f" % p[0] for p in pts),
+                        lon=",".join("%.6f" % p[1] for p in pts))
     try:
-        d = json.loads(fetch(OM_URL.format(lat=HOME_LAT, lon=HOME_LON)))
-        precip = d.get("minutely_15", {}).get("precipitation", [])
-        rain_soon, minutes = False, None
-        for i, p in enumerate(precip[:6]):
-            if p and p > 0.1:
-                rain_soon, minutes = True, i * 15
-                break
-        return rain_soon, minutes, round(sum(p or 0 for p in precip[:4]), 2), True
+        d = json.loads(fetch(url))
+        rows = d if isinstance(d, list) else [d]
+        out = om_consensus(rows)
+        if not out["ok"]:
+            log("open-meteo: response held no usable series")
+        return out
     except Exception as e:
         log("open-meteo failed: %s" % e)
-        # mm60 goes out as the -1 sentinel rather than null: command_line
-        # renders a null as the literal string "None" on
-        # sensor.rain_next_60min_mm, which then reaches every caption.
-        # minutes stays None because a radar estimate still competes with it in
-        # build(), and -1 would win that comparison and be reported as the ETA.
-        return False, None, -1, False
+        return {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
+                "prob": None, "votes": [], "models": len(OM_MODELS),
+                "need": OM_CONSENSUS}
 
 
 def hii_flashflood_watch():
@@ -713,19 +818,22 @@ def build():
             trend = round(inner_now - min(olds), 2)
             log("trend inner15: past=%s now=%.2f delta=%s" % (olds, inner_now, trend))
 
-    om_soon, om_min, om_mm60, om_ok = openmeteo_nowcast()
-    # RainViewer's nowcast frames are discontinued (the index reports zero), so
-    # the radar contributes no ETA and openmeteo_nowcast() is the only source.
-    # The dead branch that read the newest nowcast frame is gone;
-    # `rainviewer_nowcast` in the summary still reports the frame count, so a
-    # restoration stays visible.
-    rain_soon = om_soon
-    soon_min = om_min
+    om = openmeteo_nowcast()
+    rain_soon = bool(om["rain_soon"])
+    soon_min = om["minutes"]
+    om_mm60 = om["mm60"]
+    om_ok = bool(om["ok"])
     # -1 instead of null: HA's command_line platform turns a rendered "None"
     # into `unavailable`, so the sentinel keeps the sensor numeric.
     if soon_min is None:
         soon_min = -1
-
+    if om_mm60 is None:
+        om_mm60 = -1
+    log("open-meteo: %d/%d models, votes=%s, prob=%s%%, mm60=%s, eta=%s"
+        % (max(om["votes"], default=0), om["models"], om["votes"], om["prob"],
+           om_mm60, soon_min))
+    # The alert fires on either signal - the model consensus OR the radar
+    # trend - deliberately: a miss by one source must not mean no alert.
     trend_up = bool(trend is not None and trend >= 3.0 and inner15 >= 1.0)
     approaching = bool((not rain_now) and (rain_soon or trend_up))
     prev = read_previous_summary()
@@ -829,6 +937,10 @@ def build():
         "rain_class_label_en": LEVEL_EN[cls30],
         "rainviewer_nowcast": bool(nowcast),
         "openmeteo_ok": om_ok,
+        "om_models": om["models"],
+        "om_need": om["need"],
+        "om_votes": om["votes"],
+        "om_prob": om["prob"],
         "flash_flood_watch": ff_watch,
     }
     summary.update(tmd)
