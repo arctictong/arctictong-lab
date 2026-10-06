@@ -142,9 +142,15 @@ updated, frame_time, radar_zoom, radar_tile_px, radar_mpp, view_km, base_zoom, r
 rain_now, rain_soon, rain_soon_in_min, rain_next_60min_mm, approaching,
 coverage_30km, coverage_inner15km, trend_inner15km,
 rain_class_30km, rain_class_label, rain_class_label_en,
-rainviewer_nowcast, openmeteo_ok, flash_flood_watch,
+rainviewer_nowcast, openmeteo_ok, om_models, om_need, om_votes, om_prob,
+om_per_model, rain24_gauge, flash_flood_watch,
 tmd_24h, tmd_24h_rain_pct, tmd_7d_rain_pct, tmd_7d_desc, tmd_warning
 ```
+
+`om_votes` is the per-slot model vote count and `om_per_model` the per-model
+next-hour mm and probability; both feed `score_forecast.py`. `rain24_gauge` is
+the ThaiWater reading the script takes for the same log, separate from
+`sensor.rain24_home`.
 
 `rain_soon_in_min` is **`-1` when there is no nowcast signal at all** — never
 `null`. HA's `command_line` platform turns a rendered `"None"` into
