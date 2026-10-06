@@ -1372,5 +1372,40 @@ class TestForecastLog(unittest.TestCase):
         self.assertIn("append_forecast_log(forecast_record(summary))", src)
 
 
+class TestReadmeDocumentsEveryOverride(unittest.TestCase):
+    """An undocumented knob is a knob nobody turns.
+
+    The consensus thresholds especially are meant to be tuned from the scorer's
+    output, so a reader has to be able to find them. Eleven of these were
+    missing from the README until this test existed.
+    """
+
+    def test_every_radar_env_var_is_named_in_the_readme(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "radar_notify.py"),
+                  encoding="utf-8") as fh:
+            src = fh.read()
+        with open(os.path.join(here, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        names = set(re.findall(r'os\.environ\.get\(\s*"(RADAR_[A-Z0-9_]+)"',
+                               src))
+        self.assertTrue(names, "no overrides found - did the regex break?")
+        missing = sorted(n for n in names if n not in readme)
+        self.assertEqual(missing, [],
+                         "overrides missing from the README: %s" % missing)
+
+    def test_the_consensus_thresholds_are_documented_as_tunable(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "README.md"), encoding="utf-8") as fh:
+            readme = fh.read()
+        for var in ("RADAR_OM_CONSENSUS", "RADAR_OM_PROB_PCT",
+                    "RADAR_OM_RAIN_MM15", "RADAR_RAIN_NOW_M",
+                    "RADAR_RAIN_NEAR_M"):
+            with self.subTest(var=var):
+                self.assertIn(var, readme)
+        self.assertIn("score_forecast.py", readme,
+                      "the README must point at what tunes these")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -243,14 +243,69 @@ All gated by `input_boolean.weather_alerts_enabled`.
 
 ## Environment overrides
 
-`radar_notify.py` reads env vars if you want to tweak without editing:
-`RADAR_HOME_LAT`, `RADAR_HOME_LON`, `RADAR_SIZE` (px, default 950),
-`RADAR_VIEW_KM` (ground width of the image; `0` = native, i.e. no upscaling),
-`RADAR_ZOOMS` (default `11,10,9,8,7`),
-`RADAR_TILE_SIZES` (default `4096,2048,1024,512,256`),
-`RADAR_RADIUS_KM`, `RADAR_INNER_KM`, `RADAR_NEAR_KM`,
-`RADAR_PALETTE`, `RADAR_SCHEME`, `RADAR_TREND_FRAMES`,
-`RADAR_OUT`, `RADAR_SUMMARY`, `RADAR_CACHE`, `RADAR_FONTS`.
+`radar_notify.py` reads these if you want to tweak without editing. Defaults are
+the ones in the code.
+
+**Location and output**
+
+| Var | Default |
+|---|---|
+| `RADAR_HOME_LAT` / `RADAR_HOME_LON` | `13.828773` / `100.6545224` |
+| `RADAR_OUT` | `/config/www/radar/latest.png` |
+| `RADAR_SUMMARY` | `/config/www/radar/summary.json` |
+| `RADAR_CACHE` | `/config/www/radar/cache` |
+| `RADAR_FONTS` | `/config/scripts/fonts` |
+
+**Image**
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_SIZE` | `950` | px, before `VIEW_KM` |
+| `RADAR_VIEW_KM` | `0` | ground width; `0` = native, no upscaling |
+| `RADAR_ZOOMS` | `11,10,9,8,7` | tried deepest-first |
+| `RADAR_TILE_SIZES` | `4096,2048,1024,512,256` | largest RainViewer really serves wins |
+| `RADAR_RADIUS_KM` | `30` | solid ring |
+| `RADAR_INNER_KM` | `15` | stats band |
+| `RADAR_NEAR_KM` | `10` | dashed ring |
+| `RADAR_PALETTE` / `RADAR_SCHEME` | `2` / `1_1` | |
+| `RADAR_TREND_FRAMES` | `4` | older frames compared for the trend |
+
+**Rain at home — the two apertures**
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_RAIN_NOW_M` | `700` | echoed *over* the house: "raining at home now" |
+| `RADAR_RAIN_NEAR_M` | `1500` | echoed nearby: "rain is near" |
+
+**Nowcast consensus** — this is the group to tune from `score_forecast.py`
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_OM_MODELS` | `ecmwf_ifs025,icon_seamless,gfs_seamless` | JMA is excluded: coarsest, and no 15-minute probability |
+| `RADAR_OM_CONSENSUS` | `2` | of 3 models — the majority rule |
+| `RADAR_OM_RAIN_MM15` | `0.1` | mm in a slot that counts as rain |
+| `RADAR_OM_PROB_PCT` | `50` | chance that also counts as rain |
+| `RADAR_OM_NEIGHBOUR` | `0.05` | degrees; the 3×3 spans ~11 km |
+| `RADAR_OM_HORIZON` | `8` | 15-minute slots (2 h) |
+
+**Verification log**
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_RAIN_STATION` | `BKK021` | ThaiWater gauge the log records |
+| `RADAR_LOG` | `/config/www/radar/forecast_log.jsonl` | |
+| `RADAR_LOG_MAX_BYTES` | `4194304` | trimmed to the newest half past this |
+
+**Run safety**
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_BUDGET_S` | `50` | must stay under HA's fixed 60 s shell_command kill |
+| `RADAR_ANALYSIS_PX` | `1200` | ceiling for the histogram sampling resolution |
+
+> Raising `RADAR_OM_PROB_PCT` or lowering `RADAR_OM_CONSENSUS` changes how often
+> the nowcast fires. Do not tune them by feel: the log and `score_forecast.py`
+> exist to answer that question with data.
 
 ## Crop and resolution
 
