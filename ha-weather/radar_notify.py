@@ -545,11 +545,26 @@ def load_font(name, size):
     return ImageFont.load_default()
 
 
-def write_atomic(path, data):
+def write_atomic(path, data, mode=0o644):
+    """Write via a temp file + rename so a reader never sees a partial file.
+
+    mkstemp creates the file 0600. Both callers write into /config/www, which
+    is served publicly and was previously world-readable, so the mode is set
+    explicitly rather than inherited from the temp file - otherwise the output
+    is only readable because HA Core happens to run as root.
+    """
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(data)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def read_previous_summary():

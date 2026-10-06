@@ -802,6 +802,63 @@ class TestWriteAtomic(unittest.TestCase):
         self.assertEqual(os.listdir(d), ["out.bin"],
                          "an atomic write left a temp file behind")
 
+    def test_the_output_mode_is_set_explicitly(self):
+        """mkstemp defaults to 0600; /config/www is served publicly, so the
+        mode must be set rather than inherited. Asserted through the chmod call
+        because Windows does not report POSIX mode bits."""
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "out.bin")
+        seen = []
+        original = os.chmod
+
+        def spy(p, m):
+            seen.append(m)
+            return original(p, m)
+
+        os.chmod = spy
+        try:
+            rn.write_atomic(path, b"x", 0o644)
+        finally:
+            os.chmod = original
+        self.assertIn(0o644, seen, "write_atomic never set the file mode")
+
+    @unittest.skipIf(os.name == "nt", "Windows has no POSIX permission bits")
+    def test_the_output_is_world_readable(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "out.bin")
+        rn.write_atomic(path, b"x")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+
+    def test_a_failed_write_leaves_no_temp_file_behind(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "out.bin")
+
+        class Boom:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def write(self, data):
+                raise OSError("disk full")
+
+        original = os.fdopen
+
+        def fake_fdopen(fd, mode):
+            os.close(fd)
+            return Boom()
+
+        os.fdopen = fake_fdopen
+        try:
+            with self.assertRaises(OSError):
+                rn.write_atomic(path, b"x")
+        finally:
+            os.fdopen = original
+        self.assertEqual(os.listdir(d), [],
+                         "a failed write left a temp file behind")
+        self.assertFalse(os.path.exists(path))
+
     def test_png_write_goes_through_write_atomic(self):
         src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "radar_notify.py"), encoding="utf-8").read()
