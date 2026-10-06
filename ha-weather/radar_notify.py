@@ -127,9 +127,46 @@ def log(*a):
 _MEMO = {}
 
 
+# HA terminates a shell_command after 60 s and there is no setting to change it
+# (docs, 2026.9: "There is no option to alter this behavior"), so the run has to
+# police itself. A network that times out rather than refusing is what blows the
+# budget: the tile probe alone could spend 5 sizes x 3 attempts x 120 s, and the
+# process would be killed before summary.json was ever written - leaving the
+# dashboard quietly serving stale data with nothing to indicate it.
+# OPEN_BUDGET leaves room for the render and the write.
+OPEN_BUDGET = float(os.environ.get("RADAR_BUDGET_S", "50"))
+
+_DEADLINE = None
+
+
+def set_deadline(budget=None):
+    """Start the run clock. build() calls this; tests may not."""
+    global _DEADLINE
+    _DEADLINE = time.monotonic() + (OPEN_BUDGET if budget is None else budget)
+    return _DEADLINE
+
+
+def deadline_remaining():
+    """Seconds left before HA kills the process, or None when untimed."""
+    return None if _DEADLINE is None else _DEADLINE - time.monotonic()
+
+
+def budget_left(need=0.0):
+    """True when at least `need` more seconds remain, or when untimed."""
+    left = deadline_remaining()
+    return left is None or left > need
+
+
 def fetch(url, timeout=45):
     if url in _MEMO:
         return _MEMO[url]
+    # never let one request outlive the run budget: a slow source must degrade
+    # through its own fallback, not take the whole run down with it
+    left = deadline_remaining()
+    if left is not None:
+        if left <= 1:
+            raise TimeoutError("run budget exhausted")
+        timeout = min(timeout, left)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = r.read()
@@ -365,9 +402,15 @@ def pick_tile_size(make_url, z, tx, ty):
 
     Asking for 4096 and silently receiving a 256 px placeholder would undo the
     whole point, so the decoded size is verified.
+
+    Bounded by the run budget: sizes x attempts x timeout here is the single
+    biggest way for a sick network to outlast HA's 60 s kill.
     """
     for s in TILE_SIZES:
         for attempt in range(3):
+            if not budget_left(1.0):
+                log("tile probe out of budget; falling back to %d px" % TILE)
+                return TILE
             try:
                 data = fetch(make_url(s, z, tx, ty), 120)
                 im = Image.open(io.BytesIO(data))
@@ -379,6 +422,9 @@ def pick_tile_size(make_url, z, tx, ty):
             except Exception as e:
                 # a frame that was just generated can answer 410 for a while
                 log("  tile size %d attempt %d failed: %s" % (s, attempt + 1, e))
+                if not budget_left(4.0):
+                    log("tile probe out of budget; falling back to %d px" % TILE)
+                    return TILE
                 time.sleep(3)
     return TILE
 
@@ -552,6 +598,9 @@ def carry_flag(fresh, prev):
 
 def build():
     t0 = time.time()
+    # HA kills the process at 60 s; start the clock so a slow source degrades
+    # instead of costing the whole cycle
+    set_deadline()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
 
     index = {"host": "https://tilecache.rainviewer.com", "past": [], "nowcast": []}

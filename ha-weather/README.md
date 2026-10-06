@@ -14,7 +14,7 @@ Alert radius: **30 km** (solid ring) plus a **10 km** dashed inner ring and scal
 | `weather_radar.yaml` | HA package: `shell_command`, all `command_line` sensors, REST sensors for PM2.5/rain, thresholds. |
 | `make_automations.py` | Creates/updates the 7 automations with Thai Telegram captions. |
 | `add_lovelace_view.py` | Adds the "ฝน & อากาศ" Lovelace view (idempotent, keeps existing views). |
-| `test_radar_notify.py` | 69 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
+| `test_radar_notify.py` | 77 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, the run time budget, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
 | `test_captions.py` | 23 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`, `unavailable`) can reach a message from a TMD **or** a PM2.5/rain/Open-Meteo sensor. |
 | `fonts/Sarabun-*.ttf` | Thai+Latin font so the image can render Thai labels. |
 
@@ -230,11 +230,18 @@ Rendering is driven by one number — the radar's ground resolution:
   so a Telegram send racing the build cannot attach a half-written image.
 * `class_histogram()` honours its `grid` argument. It used to overwrite it
   unconditionally, so the trend loop's `grid=256` silently became 300/540.
-* `pick_tile_size()` can spend `5 sizes × 3 attempts × fetch(timeout=120)` ≈
-  30 min if the network times out rather than refusing, and
-  `shell_command.weather_radar_build` sets no `timeout:` — so HA's default
-  (~60 s) can kill the build before `write_atomic` runs, leaving the dashboard
-  serving stale data with no indication. Worth an explicit `timeout:`.
+* **The run polices its own time budget.** HA terminates a `shell_command`
+  after 60 s and the docs are explicit that "there is no option to alter this
+  behavior", so there is no `timeout:` key to set. A network that times out
+  rather than refusing was the way to blow it: `pick_tile_size()` alone could
+  spend `5 sizes × 3 attempts × fetch(timeout=120)` ≈ 30 min, and HA would kill
+  the process before `write_atomic()` ran — leaving the dashboard quietly
+  serving stale data with nothing to indicate it. `build()` now calls
+  `set_deadline()` (default 50 s, `RADAR_BUDGET_S`), `fetch()` clamps every
+  request to the time left and refuses once it is gone, and the probe returns
+  early. Each source then degrades through the fallback it already had — the
+  trend reads `None`, TMD carries forward, flash-flood holds, Open-Meteo writes
+  its `-1` sentinel — instead of dragging the whole run past the kill.
 * **RainViewer nowcast is discontinued** — `radar nowcast frames: 0`. The
   nowcast code path and `sensor.rain_soon_in_min` are therefore effectively
   dead: the sensor parks at `-1` ("unknown") and `binary_sensor.radar_rain_soon`

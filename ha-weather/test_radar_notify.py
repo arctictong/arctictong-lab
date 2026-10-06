@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -806,6 +807,121 @@ class TestWriteAtomic(unittest.TestCase):
                                 "radar_notify.py"), encoding="utf-8").read()
         self.assertIn("write_atomic(OUT", src,
                       "latest.png is written non-atomically again")
+
+
+class TestRunBudget(unittest.TestCase):
+    """HA terminates a shell_command at 60 s and the docs are explicit that
+    "there is no option to alter this behavior", so the run has to police
+    itself. Before this, a network that timed out rather than refused could
+    spend ~30 min in the tile probe alone; HA would kill the process before
+    summary.json was written, leaving stale data with no indication."""
+
+    def setUp(self):
+        self._saved = rn._DEADLINE
+
+    def tearDown(self):
+        rn._DEADLINE = self._saved
+
+    def test_an_untimed_run_never_refuses(self):
+        rn._DEADLINE = None
+        self.assertIsNone(rn.deadline_remaining())
+        self.assertTrue(rn.budget_left(10 ** 9))
+
+    def test_the_budget_counts_down(self):
+        rn._DEADLINE = time.monotonic() + 30
+        self.assertGreater(rn.deadline_remaining(), 25)
+        self.assertTrue(rn.budget_left(5))
+        self.assertFalse(rn.budget_left(60))
+
+    def test_set_deadline_honours_its_argument(self):
+        rn.set_deadline(12)
+        self.assertLessEqual(rn.deadline_remaining(), 12)
+        self.assertTrue(rn.budget_left(1))
+
+    def test_an_exhausted_budget_blocks_a_request(self):
+        rn._DEADLINE = time.monotonic() - 1
+        with self.assertRaises(TimeoutError):
+            rn.fetch("http://127.0.0.1:9/never")
+
+    def test_the_probe_gives_up_without_fetching(self):
+        """Out of budget the probe must return at once, not make one more
+        120 s request."""
+        rn._DEADLINE = time.monotonic() - 1
+        calls = []
+
+        def never(url, timeout=45):
+            calls.append(url)
+            raise AssertionError("fetch called with no budget left")
+
+        orig = rn.fetch
+        rn.fetch = never
+        try:
+            got = rn.pick_tile_size(
+                lambda s, z=None, x=None, y=None: "u:%d" % s, 7, 0, 0)
+        finally:
+            rn.fetch = orig
+        self.assertEqual(got, rn.TILE)
+        self.assertEqual(calls, [],
+                         "the probe made a request it had no budget for")
+
+    def test_the_probe_cannot_overrun_its_budget(self):
+        """The regression: 5 sizes x 3 attempts, each retrying, used to run for
+        minutes. With a deadline it must return well inside it."""
+        rn.set_deadline(2)
+        ticks = []
+
+        def failing(url, timeout=45):
+            ticks.append(timeout)
+            raise OSError("timed out")
+
+        orig_fetch, orig_sleep = rn.fetch, rn.time.sleep
+        rn.fetch = failing
+        rn.time.sleep = lambda s: None
+        started = time.monotonic()
+        try:
+            got = rn.pick_tile_size(
+                lambda s, z=None, x=None, y=None: "u:%d" % s, 7, 0, 0)
+        finally:
+            rn.fetch = orig_fetch
+            rn.time.sleep = orig_sleep
+        elapsed = time.monotonic() - started
+        self.assertEqual(got, rn.TILE)
+        self.assertLess(elapsed, 1.0,
+                        "the probe ran %.2fs against a 2s budget" % elapsed)
+
+    def test_a_request_is_clamped_to_what_is_left(self):
+        """A 120 s tile request must be shortened to the remaining budget, or
+        the clamp is decorative."""
+        rn.set_deadline(3)
+        seen = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        def fake_urlopen(req, timeout):
+            seen["timeout"] = timeout
+            return FakeResp()
+
+        orig = rn.urllib.request.urlopen
+        rn.urllib.request.urlopen = fake_urlopen
+        try:
+            rn.fetch("http://example.invalid/clamp", 120)
+        finally:
+            rn.urllib.request.urlopen = orig
+        self.assertLessEqual(seen["timeout"], 3.0,
+                             "a 120s request was not clamped to the budget")
+
+    def test_build_starts_the_clock(self):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "radar_notify.py"), encoding="utf-8").read()
+        self.assertIn("set_deadline()", src)
 
 
 if __name__ == "__main__":
