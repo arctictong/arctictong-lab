@@ -621,6 +621,66 @@ class TestHomeClass(unittest.TestCase):
         finally:
             rn.fetch = original
 
+    def test_the_two_apertures_are_the_documented_sizes(self):
+        """A 1.5 km circle is not "over the house". build() asks twice, tight
+        for overhead and wider for nearby, and the sizes are the difference.
+
+        Above 256 px tiles they are genuinely different radii. At 256 px the
+        scale is ~1.2 km/px, so both round to one pixel and the distinction
+        disappears - which is one more reason the deployed config renders at
+        4096.
+        """
+        self.assertLess(rn.RAIN_NOW_M, rn.RAIN_NEAR_M)
+        for tpx in (512, 1024, 2048, 4096):
+            mpp = rn.meters_per_pixel(HOME_LAT, 7, tpx)
+            a = max(0, min(1200, int(round(rn.RAIN_NOW_M / mpp))))
+            b = max(0, min(1200, int(round(rn.RAIN_NEAR_M / mpp))))
+            self.assertLess(a, b, "apertures collapsed at tpx%d" % tpx)
+
+    def test_the_apertures_collapse_on_a_very_coarse_tile(self):
+        """Documented, not asserted as good: at 256 px the two questions are
+        unanswerable separately."""
+        mpp = rn.meters_per_pixel(HOME_LAT, 7, 256)
+        a = max(0, min(1200, int(round(rn.RAIN_NOW_M / mpp))))
+        b = max(0, min(1200, int(round(rn.RAIN_NEAR_M / mpp))))
+        self.assertEqual(a, b)
+
+    def test_the_overhead_aperture_is_well_under_a_kilometre(self):
+        self.assertLessEqual(rn.RAIN_NOW_M, 1000,
+                             "an echo a kilometre away is not over the house")
+
+    def test_home_class_honours_an_explicit_radius(self):
+        """Two apertures must give the same answer on a hit and differ on a
+        near miss, or the split does nothing."""
+        cx, cy = rn.latlon_to_world_px(HOME_LAT, HOME_LON, 7, 4096)
+        mpp = rn.meters_per_pixel(HOME_LAT, 7, 4096)
+        px_off = int(round(1100.0 / mpp))          # ~1.1 km away
+
+        def tile_at(offset_px):
+            im = Image.new("RGB", (4096, 4096), (0, 0, 0))
+            if offset_px is not None:
+                im.putpixel((int(cx) % 4096, min(4095, int(cy) % 4096)),
+                            rn._RAMP[9])
+            return im
+
+        import io as _io
+        orig = rn.fetch
+        try:
+            # an echo 1.1 km away: inside the near aperture, outside the tight
+            im = Image.new("RGB", (4096, 4096), (0, 0, 0))
+            tx, ty = int(cx // 4096), int(cy // 4096)
+            qx, qy = int(cx - tx * 4096), int(cy - ty * 4096)
+            im.putpixel((min(4095, qx + px_off), qy), rn._RAMP[9])
+            buf = _io.BytesIO()
+            im.save(buf, "PNG")
+            rn.fetch = lambda *a, **k: buf.getvalue()
+            near = rn.home_class("u", 7, cx, cy, mpp, 4096, rn.RAIN_NEAR_M)
+            now = rn.home_class("u", 7, cx, cy, mpp, 4096, rn.RAIN_NOW_M)
+        finally:
+            rn.fetch = orig
+        self.assertGreaterEqual(near, 0, "the near aperture missed a 1.1 km echo")
+        self.assertEqual(now, -1, "the overhead aperture saw an echo 1.1 km away")
+
 
 class TestChooseGrid(unittest.TestCase):
     """class_histogram's grid argument was overwritten unconditionally, so the

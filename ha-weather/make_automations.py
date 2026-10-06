@@ -158,12 +158,15 @@ SUMMARY_CAPTION = (
 )
 
 APPROACH_CAPTION = (
-    "🌧️ ฝนกำลังจะมาถึงบ้าน\n"
+    "🌧️ ฝนกำลังใกล้บ้าน\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
     "{% if states('sensor.rain_soon_in_min')|int(0) > 0 %}"
-    "คาดว่าฝนจะมาถึงใน ~{{ states('sensor.rain_soon_in_min')|int }} นาที"
-    "{% else %}กำลังเข้าใกล้บ้าน (ยังไม่มี nowcast ที่แม่นยำ){% endif %}\n"
+    "คาดว่าจะตกที่บ้านในอีก ~{{ states('sensor.rain_soon_in_min')|int }} นาที"
+    "{% elif is_state('binary_sensor.radar_echo_near','on') %}"
+    "ตรวจพบกลุ่มฝนใกล้บ้าน คาดว่าจะตกในไม่ช้า"
+    "{% else %}แบบจำลองคาดว่าฝนจะมา แต่ยังไม่พบกลุ่มฝนใกล้บ้าน"
+    "{% endif %}\n"
     "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm") + "\n"
     "เรดาร์ 30 กม.: " + value_or("sensor.radar_rain_near", "%", empty="-")
     + has_rain_level() + "\n"
@@ -176,9 +179,11 @@ RAIN_NOW_CAPTION = (
     "☔ ฝนตกที่บ้านตอนนี้\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
+    # the echo over the house, not the 30 km maximum - a storm 25 km away must
+    # not be reported as the intensity here
+    "ความแรงที่บ้าน: " + value_or("sensor.rain_at_home", empty="-") + "\n"
     "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm") + "\n"
-    "เรดาร์ 30 กม.: " + value_or("sensor.radar_rain_near", "%", empty="-")
-    + has_rain_level() + "\n"
+    "เรดาร์ 30 กม.: " + value_or("sensor.radar_rain_near", "%", empty="-") + "\n"
     "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm")
 )
 

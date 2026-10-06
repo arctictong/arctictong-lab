@@ -40,6 +40,18 @@ command_line:
       payload_off: "OFF"
       device_class: moisture
       scan_interval: 300
+  # An echo within ~1.5 km, not necessarily overhead. Kept separate from
+  # radar_rain_now (700 m) so the caption can say "near, likely soon" instead
+  # of claiming it is already raining at the house.
+  - binary_sensor:
+      name: "Radar echo near"
+      unique_id: radar_echo_near
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ 'ON' if value_json.rain_near else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device_class: moisture
+      scan_interval: 300
   - binary_sensor:
       name: "Radar rain approaching"
       unique_id: radar_rain_approaching
@@ -89,6 +101,14 @@ command_line:
       command: "cat /config/www/radar/summary.json"
       value_template: "{{ value_json.rain_class_label }}"
       icon: mdi:weather-pouring
+      scan_interval: 300
+  # the intensity over the house specifically, not the 30 km maximum
+  - sensor:
+      name: "Rain at home"
+      unique_id: rain_at_home_class
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_now_label | default('ไม่มีฝน', true) }}"
+      icon: mdi:home-thermometer-outline
       scan_interval: 300
   - sensor:
       name: "Radar zoom"

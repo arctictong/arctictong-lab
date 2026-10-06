@@ -32,8 +32,10 @@ LIVE = {
     "sensor.rain24_home": "3.2",
     "binary_sensor.radar_rain_now": "off",
     "binary_sensor.radar_rain_approaching": "off",
+    "binary_sensor.radar_echo_near": "off",
     "sensor.radar_rain_near": "40.75",
     "sensor.radar_rain_class": "ฝนปานกลาง",
+    "sensor.rain_at_home": "ไม่มีฝน",
     "sensor.rain_next_60min_mm": "0",
     "sensor.rain_soon_in_min": "-1",
     "binary_sensor.flash_flood_watch": "off",
@@ -425,6 +427,51 @@ class TestYamlPm25Templates(unittest.TestCase):
             self._render(s["pm25_home_source"],
                          {"sensor.pm25_home": "unavailable",
                           "sensor.pm25_pcd": "88"}))
+
+
+class TestRainWordingMatchesTheEvidence(unittest.TestCase):
+    """The 9:47 alert said "ฝนตกที่บ้านตอนนี้" on the strength of an echo 1.4 km
+    away. The wording has to follow the aperture, not the other way round."""
+
+    def test_near_echo_says_rain_is_coming_not_that_it_is_here(self):
+        states = dict(LIVE)
+        states["binary_sensor.radar_echo_near"] = "on"
+        states["binary_sensor.radar_rain_now"] = "off"
+        out = render(ma.APPROACH_CAPTION, states)
+        self.assertIn("ตรวจพบกลุ่มฝนใกล้บ้าน", out)
+        self.assertNotIn("ตกที่บ้านตอนนี้", out)
+
+    def test_model_only_says_so_rather_than_claiming_an_echo(self):
+        """approaching also fires on the model consensus with no radar echo at
+        all; claiming to have seen a cell would be a lie."""
+        states = dict(LIVE)
+        states["binary_sensor.radar_echo_near"] = "off"
+        out = render(ma.APPROACH_CAPTION, states)
+        self.assertIn("แบบจำลองคาดว่าฝนจะมา", out)
+        self.assertNotIn("ตรวจพบกลุ่มฝนใกล้บ้าน", out)
+
+    def test_a_known_eta_is_stated_first(self):
+        states = dict(LIVE)
+        states["sensor.rain_soon_in_min"] = "30"
+        states["binary_sensor.radar_echo_near"] = "on"
+        out = render(ma.APPROACH_CAPTION, states)
+        self.assertIn("ในอีก ~30 นาที", out)
+
+    def test_the_now_caption_reports_the_echo_over_the_house(self):
+        """It used to print the 30 km maximum, so a storm 25 km away could be
+        reported as the intensity at home."""
+        states = dict(LIVE)
+        states["sensor.rain_at_home"] = "ฝนหนักมาก"
+        states["sensor.radar_rain_class"] = "ฝนรุนแรง"      # a distant storm
+        out = render(ma.RAIN_NOW_CAPTION, states)
+        self.assertIn("ความแรงที่บ้าน: ฝนหนักมาก", out)
+        self.assertNotIn("ฝนรุนแรง", out)
+
+    def test_the_now_caption_never_prints_a_bare_sentinel(self):
+        states = dict(LIVE)
+        states["sensor.rain_at_home"] = "unavailable"
+        out = render(ma.RAIN_NOW_CAPTION, states)
+        self.assertNotIn("unavailable", out)
 
 
 if __name__ == "__main__":

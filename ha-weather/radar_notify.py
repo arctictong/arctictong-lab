@@ -58,6 +58,14 @@ TILE = 256
 RADIUS_KM = float(os.environ.get("RADAR_RADIUS_KM", "30"))
 INNER_KM = float(os.environ.get("RADAR_INNER_KM", "15"))
 NEAR_KM = float(os.environ.get("RADAR_NEAR_KM", "10"))
+# Two apertures around home, because they answer different questions and the
+# caption has to say which one it used:
+#   RAIN_NOW_M  - echoed *over* the house; "raining at home now" is defensible
+#   RAIN_NEAR_M - echoed somewhere close; "rain is near, likely soon"
+# One 1.5 km aperture for both was the bug: an echo 1.4 km away was announced
+# as rain at the house.
+RAIN_NOW_M = float(os.environ.get("RADAR_RAIN_NOW_M", "700"))
+RAIN_NEAR_M = float(os.environ.get("RADAR_RAIN_NEAR_M", "1500"))
 PALETTE = os.environ.get("RADAR_PALETTE", "2")
 SCHEME = os.environ.get("RADAR_SCHEME", "1_1")
 TREND_FRAMES = int(os.environ.get("RADAR_TREND_FRAMES", "4"))
@@ -388,9 +396,16 @@ def class_histogram(img, mpp, bands, grid=None):
             for k in keys}
 
 
-def home_class(tile_url, z, cx, cy, mpp, tpx=TILE):
-    """Strongest echo class within ~1.5 km of home, -1 when there is none."""
-    r = max(0, min(1200, int(round(1500.0 / mpp))))
+def home_class(tile_url, z, cx, cy, mpp, tpx=TILE, radius_m=None):
+    """Strongest echo class within `radius_m` of home, -1 when there is none.
+
+    The radius is explicit because it decides what the answer *means*: an echo
+    anywhere inside a 1.5 km circle is not rain over the house, and calling it
+    "raining at home now" was wrong often enough to be noticed. build() asks
+    twice - tight for overhead, wider for nearby.
+    """
+    radius_m = RAIN_NEAR_M if radius_m is None else radius_m
+    r = max(0, min(1200, int(round(radius_m / mpp))))
     tx = int(cx // tpx)
     ty = int(cy // tpx)
     qx = int(cx - tx * tpx)
@@ -870,6 +885,8 @@ def build():
     cls30 = 0
     trend = None
     rain_now = False
+    rain_near = False
+    now_cls = -1
     if past and zoom:
         tmpl = make_url(tile_px, "{z}", "{x}", "{y}")
         rcx, rcy = latlon_to_world_px(HOME_LAT, HOME_LON, zoom, tile_px)
@@ -882,9 +899,12 @@ def build():
                               (0.0, INNER_KM, "inner15")])
         cover30, cls30 = st["cover30"]["pct"], st["cover30"]["class"]
         inner15 = st["inner15"]["pct"]
-        rain_now = home_class(tmpl, zoom, rcx, rcy, mpp, tile_px) >= 0
-        log("coverage30=%.2f%% (class %d) inner15=%.2f%% now=%s"
-            % (cover30, cls30, inner15, rain_now))
+        now_cls = home_class(tmpl, zoom, rcx, rcy, mpp, tile_px, RAIN_NOW_M)
+        rain_now = now_cls >= 0
+        rain_near = home_class(tmpl, zoom, rcx, rcy, mpp, tile_px,
+                               RAIN_NEAR_M) >= 0
+        log("coverage30=%.2f%% (class %d) inner15=%.2f%% now=%s(%d) near=%s"
+            % (cover30, cls30, inner15, rain_now, now_cls, rain_near))
 
         # trend: inner-15 km coverage across older frames, measured on small
         # tiles so it costs a couple of fetches per frame instead of a full one
@@ -926,9 +946,12 @@ def build():
         % (max(om["votes"], default=0), om["models"], om["votes"], om["prob"],
            om_mm60, soon_min))
     # The alert fires on either signal - the model consensus OR the radar
-    # trend - deliberately: a miss by one source must not mean no alert.
+    # trend - deliberately: a miss by one source must not mean no alert. An
+    # echo within RAIN_NEAR_M also counts, but only while rain_now is false, so
+    # "near" and "overhead" stay distinct states rather than both firing.
     trend_up = bool(trend is not None and trend >= 3.0 and inner15 >= 1.0)
-    approaching = bool((not rain_now) and (rain_soon or trend_up))
+    approaching = bool((not rain_now)
+                       and (rain_soon or trend_up or rain_near))
     prev = read_previous_summary()
     # A flash-flood feed failure is "unknown", never "no watch". Hold the last
     # known value rather than publishing False, which reads as all-clear.
@@ -1020,6 +1043,11 @@ def build():
         "base_zoom": base_zoom,
         "radar_ok": bool(zoom),
         "rain_now": rain_now,
+        "rain_near": rain_near,
+        "rain_now_class": now_cls,
+        # the intensity *over the house*, not the 30 km maximum: cls30 can be
+        # "รุนแรง" from a storm 25 km away while nothing is falling here
+        "rain_now_label": LEVEL_TH[now_cls + 1] if now_cls >= 0 else LEVEL_TH[0],
         "rain_soon": rain_soon,
         "rain_soon_in_min": soon_min,
         "rain_next_60min_mm": om_mm60,
