@@ -39,6 +39,7 @@ LIVE = {
     "binary_sensor.radar_rain_now": "off",
     "binary_sensor.radar_echo_near": "off",
     "binary_sensor.radar_rain_approaching": "off",
+    "sensor.rain_motion_eta": "-1",
 }
 
 
@@ -166,6 +167,24 @@ class TestStatusMarkdown(unittest.TestCase):
                      {"binary_sensor.radar_rain_now": "on",
                       "sensor.rain_soon_in_min": "30"})
         self.assertIn("คาดว่าต่ออีก ~30 นาที", out)
+
+    def test_a_motion_eta_is_folded_into_the_sentence(self):
+        """It is part of the same answer - the mass is close AND closing, with
+        a time attached - so it belongs in the sentence, not a separate row."""
+        out = render(lv.status_markdown(),
+                     {"binary_sensor.radar_echo_near": "on",
+                      "sensor.rain_motion_eta": "30"})
+        self.assertIn("คาดว่าจะตกในไม่ช้า", out)
+        self.assertIn("กลุ่มฝนเคลื่อนเข้ามา ~30 นาที", out)
+
+    def test_no_motion_eta_leaves_no_caveat(self):
+        """A stationary mass must not put a caveat into the sentence."""
+        out = render(lv.status_markdown(),
+                     {"binary_sensor.radar_echo_near": "on",
+                      "sensor.rain_motion_eta": "-1"})
+        self.assertIn("คาดว่าจะตกในไม่ช้า", out)
+        self.assertNotIn("เคลื่อนเข้ามา", out)
+        self.assertNotIn("-1", out)
 
     def test_the_consensus_line_appears_when_there_is_one(self):
         out = render(lv.status_markdown())

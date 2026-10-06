@@ -133,6 +133,20 @@ def tmd_text(label, entity):
             "{%% endif %%}" % (entity, MISSING_JINJA, label, entity))
 
 
+def motion_line():
+    """The motion, only when it produced an arrival estimate.
+
+    The estimator refuses to answer unless the mass is genuinely closing at a
+    measurable speed, so an ETA is a real prediction rather than a guess - which
+    is exactly why the line is worth sending when it exists, and worth omitting
+    when it does not. A receding or stationary mass is not news.
+    """
+    return ("{% set eta = states('sensor.rain_motion_eta')|int(-1) %}"
+            "{% if eta >= 0 %}"
+            "🌧️ กลุ่มฝนเคลื่อนเข้ามา ถึงบ้านในอีก ~{{ eta }} นาที\n"
+            "{% endif %}")
+
+
 def past_line():
     """The hour behind, shown only when something actually fell.
 
@@ -159,8 +173,9 @@ SUMMARY_CAPTION = (
     "else ('ฝนกำลังจะมา' if is_state('binary_sensor.radar_rain_approaching','on') else 'ยังไม่มีฝน') }}"
     + " (" + value_or("sensor.radar_rain_near", "%", empty="-") + ")"
     + has_rain_level() + "\n"
-    "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm")
-    + "{% if is_state('binary_sensor.radar_rain_approaching','on') and states('sensor.rain_soon_in_min')|int(0) > 0 %}"
+    + motion_line()
+    + "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm")
+    + "{% if is_state('binary_sensor.radar_rain_approaching','on') and states('sensor.rain_soon_in_min')|int(0) > 0 and states('sensor.rain_motion_eta')|int(-1) < 0 %}"
     " · ในอีก {{ states('sensor.rain_soon_in_min') }} นาที{% endif %}\n"
     "{% if is_state('binary_sensor.flash_flood_watch','on') %}⚠️ พื้นที่เฝ้าระวังน้ำท่วมฉับพลัน (HII 24 ชม.)\n{% endif %}"
     + tmd_pct("พยากรณ์ กรมฝนหลวง 24 ชม.: ฝน", "sensor.tmd_rain_24h_pct")
@@ -174,8 +189,12 @@ APPROACH_CAPTION = (
     "🌧️ ฝนกำลังใกล้บ้าน\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
-    "{% if states('sensor.rain_soon_in_min')|int(0) > 0 %}"
-    "คาดว่าจะตกที่บ้านในอีก ~{{ states('sensor.rain_soon_in_min')|int }} นาที"
+    "{% set eta = states('sensor.rain_motion_eta')|int(-1) %}"
+    "{% set soon = states('sensor.rain_soon_in_min')|int(0) %}"
+    "{% if eta >= 0 %}"
+    "กลุ่มฝนเคลื่อนเข้ามา ถึงบ้านในอีก ~{{ eta }} นาที"
+    "{% elif soon > 0 %}"
+    "คาดว่าจะตกที่บ้านในอีก ~{{ soon }} นาที"
     "{% elif is_state('binary_sensor.radar_echo_near','on') %}"
     "ตรวจพบกลุ่มฝนใกล้บ้าน คาดว่าจะตกในไม่ช้า"
     "{% else %}แบบจำลองคาดว่าฝนจะมา แต่ยังไม่พบกลุ่มฝนใกล้บ้าน"
@@ -213,6 +232,20 @@ RAIN24_CAPTION = (
     "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm") + "\n"
     "เกณฑ์: {{ states('input_number.rain_alert_threshold')|int }} mm"
 )
+
+def score_message():
+    """The weekly scoreboard, as a preformatted Telegram message.
+
+    The scorer refuses to rank below its --min-hours threshold and says so in
+    its own output, so this passes stdout through rather than summarising it -
+    a summary here could only soften that.
+    """
+    return ("📊 คะแนนโมเดลพยากรณ์ฝน (สัปดาห์นี้)\n"
+            "{{ now().strftime('%d/%m/%Y') }}\n\n"
+            "<pre>{{ score.stdout }}</pre>\n"
+            "อ่าน: precision = ในชั่วโมงที่โมเดลบอกว่าฝนตก เรดาร์เห็นฝนกี่ %\n"
+            "recall = ในชั่วโมงที่เรดาร์เห็นฝน โมเดลบอกว่าตกกี่ %")
+
 
 AUTOMATIONS = [
     {"id": "weather_radar_refresh",
@@ -271,6 +304,22 @@ AUTOMATIONS = [
                   "from": "off", "to": "on"}],
      "condition": [ENABLED, cooldown("weather_rain_now", 3600)],
      "action": send_photo(RAIN_NOW_CAPTION), "mode": "single", "max_exceeded": "silent"},
+
+    # Weekly, and it prints whatever the scorer says - including that the log
+    # is not yet long enough to rank anything, which is the honest answer for
+    # the first couple of weeks.
+    {"id": "weather_model_score",
+     "alias": "คะแนนโมเดลพยากรณ์ (รายสัปดาห์)",
+     "trigger": [{"platform": "time", "at": "09:00:00"}],
+     "condition": [ENABLED,
+                   {"condition": "time", "weekday": ["mon"]}],
+     "action": [
+         {"service": "shell_command.score_forecast",
+          "response_variable": "score"},
+         {"service": "telegram_bot.send_message",
+          "data": {"chat_id": CHAT, "message": score_message()}},
+     ],
+     "mode": "single", "max_exceeded": "silent"},
 ]
 
 if __name__ == "__main__":

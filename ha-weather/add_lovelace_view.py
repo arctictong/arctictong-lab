@@ -61,6 +61,18 @@ def models_line():
     )
 
 
+def motion_eta_fragment():
+    """' · กลุ่มฝนเคลื่อนเข้ามา ~N นาที' when the estimator produced an ETA.
+
+    Folded into the sentence rather than given its own row, because it is part
+    of the same answer: the mass is close AND closing, with a time attached.
+    Only shown when there is an ETA, so a stationary or unmeasurable mass does
+    not put a caveat in the middle of the sentence.
+    """
+    return ("{% set eta = states('sensor.rain_motion_eta')|int(-1) %}"
+            "{% if eta >= 0 %} · กลุ่มฝนเคลื่อนเข้ามา ~{{ eta }} นาที{% endif %}")
+
+
 def status_markdown():
     """The single sentence that answers "what is happening at home".
 
@@ -85,7 +97,7 @@ def status_markdown():
         "{% endif %}</ha-alert>"
         "{% elif is_state('binary_sensor.radar_echo_near','on') %}"
         "<ha-alert alert-type=\"warning\">🌧️ <b>ตรวจพบกลุ่มฝนใกล้บ้าน</b><br>"
-        "คาดว่าจะตกในไม่ช้า</ha-alert>"
+        "คาดว่าจะตกในไม่ช้า" + motion_eta_fragment() + "</ha-alert>"
         "{% elif is_state('binary_sensor.radar_rain_approaching','on') %}"
         "<ha-alert alert-type=\"warning\">⏱️ <b>คาดว่าฝนจะมา</b><br>"
         "{% if states('sensor.rain_soon_in_min')|int(0) > 0 %}"

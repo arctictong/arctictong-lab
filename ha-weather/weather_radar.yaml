@@ -20,6 +20,9 @@
 
 shell_command:
   weather_radar_build: "python3 /config/scripts/radar_notify.py"
+  # The model scoreboard. --min-hours makes it refuse to rank until the log
+  # holds enough windows, so the weekly message cannot overclaim.
+  score_forecast: "python3 /config/scripts/score_forecast.py --min-hours 200"
 
 # Reads /config/www/radar/summary.json written by radar_notify.py
 command_line:

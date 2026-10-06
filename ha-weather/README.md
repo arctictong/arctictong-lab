@@ -270,6 +270,7 @@ less than the estimator resolves.
 | แจ้งเตือนฝน 24 ชม. สูง | `sensor.rain24_home` over threshold, 2 h cooldown |
 | แจ้งเตือน ฝนกำลังจะมาถึงบ้าน | `binary_sensor.radar_rain_approaching` off→on, 1 h cooldown |
 | แจ้งเตือน ฝนตกที่บ้าน | `binary_sensor.radar_rain_now` off→on, 1 h cooldown |
+| คะแนนโมเดลพยากรณ์ (รายสัปดาห์) | Monday 09:00 — runs `score_forecast` and posts its output verbatim |
 
 All gated by `input_boolean.weather_alerts_enabled`.
 

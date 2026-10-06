@@ -38,6 +38,8 @@ LIVE = {
     "sensor.rain_at_home": "ไม่มีฝน",
     "sensor.rain_next_60min_mm": "0",
     "sensor.rain_past_60min_mm": "0",
+    "sensor.rain_motion": "นิ่ง (วัดการเคลื่อนที่ไม่ได้)",
+    "sensor.rain_motion_eta": "-1",
     "sensor.rain_soon_in_min": "-1",
     "binary_sensor.flash_flood_watch": "off",
     "sensor.tmd_rain_24h_pct": "80",
@@ -218,7 +220,8 @@ class TestNonTmdSensorsAreFiltered(unittest.TestCase):
 
     # the non-TMD sensors every caption reads, and where they surface
     WATCHED = ["sensor.pm25_home", "sensor.pm25_pcd", "sensor.rain24_home",
-               "sensor.rain_next_60min_mm", "sensor.rain_past_60min_mm"]
+               "sensor.rain_next_60min_mm", "sensor.rain_past_60min_mm",
+               "sensor.rain_motion_eta"]
 
     def test_no_sentinel_reaches_the_summary_caption(self):
         for entity in self.WATCHED:
@@ -498,6 +501,94 @@ class TestPastHourLine(unittest.TestCase):
 
     def test_hidden_when_the_sensor_is_unknown(self):
         self.assertNotIn("ที่ผ่านมา", self._out("unknown"))
+
+
+class TestMotionLine(unittest.TestCase):
+    """The motion estimate is folded in only when it produced an arrival time.
+
+    The estimator refuses to answer unless the mass is genuinely closing at a
+    measurable speed, so an ETA is a prediction rather than a guess - and a
+    stationary mass must not put a caveat into a message about rain."""
+
+    def test_hidden_without_an_eta(self):
+        states = dict(LIVE)
+        states["sensor.rain_motion_eta"] = "-1"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertNotIn("เคลื่อนเข้ามา", out)
+        self.assertNotIn("-1", out)
+
+    def test_shown_with_an_eta(self):
+        states = dict(LIVE)
+        states["sensor.rain_motion_eta"] = "30"
+        self.assertIn("กลุ่มฝนเคลื่อนเข้ามา ถึงบ้านในอีก ~30 นาที",
+                      render(ma.SUMMARY_CAPTION, states))
+
+    def test_a_stationary_mass_puts_no_caveat_in_the_message(self):
+        states = dict(LIVE)
+        states["sensor.rain_motion"] = "นิ่ง (วัดการเคลื่อนที่ไม่ได้)"
+        states["sensor.rain_motion_eta"] = "-1"
+        self.assertNotIn("นิ่ง", render(ma.SUMMARY_CAPTION, states))
+
+    def test_the_approach_caption_carries_it_too(self):
+        states = dict(LIVE)
+        states["sensor.rain_motion_eta"] = "45"
+        self.assertIn("~45 นาที", render(ma.APPROACH_CAPTION, states))
+
+    def test_the_model_eta_steps_aside_when_motion_has_one(self):
+        """Two arrival times in one message is worse than one, and the radar
+        measurement is the more direct of the two."""
+        states = dict(LIVE)
+        states["binary_sensor.radar_rain_approaching"] = "on"
+        states["sensor.rain_soon_in_min"] = "30"
+        states["sensor.rain_motion_eta"] = "45"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertIn("~45 นาที", out)
+        self.assertNotIn("ในอีก 30 นาที", out)
+
+    def test_the_model_eta_is_used_when_motion_has_none(self):
+        states = dict(LIVE)
+        states["binary_sensor.radar_rain_approaching"] = "on"
+        states["sensor.rain_soon_in_min"] = "30"
+        states["sensor.rain_motion_eta"] = "-1"
+        self.assertIn("ในอีก 30 นาที", render(ma.SUMMARY_CAPTION, states))
+
+
+class TestScoreAutomation(unittest.TestCase):
+    """The weekly scoreboard. Its whole value is that it cannot overclaim, so
+    the message passes the scorer's stdout through rather than summarising."""
+
+    def _auto(self):
+        return next(a for a in ma.AUTOMATIONS if a["id"] == "weather_model_score")
+
+    def test_it_runs_on_a_schedule(self):
+        self.assertEqual(self._auto()["trigger"][0]["platform"], "time")
+
+    def test_it_is_restricted_to_one_weekday(self):
+        conds = self._auto()["condition"]
+        time_conds = [c for c in conds if c.get("condition") == "time"]
+        self.assertTrue(time_conds, "no weekday condition - it would run daily")
+        self.assertEqual(time_conds[0]["weekday"], ["mon"])
+
+    def test_it_respects_the_alerts_switch(self):
+        ents = [c.get("entity_id") for c in self._auto()["condition"]]
+        self.assertIn("input_boolean.weather_alerts_enabled", ents)
+
+    def test_it_captures_the_scorer_output(self):
+        acts = self._auto()["action"]
+        self.assertTrue(any(a.get("response_variable") == "score"
+                            for a in acts),
+                        "the scorer's stdout is not captured")
+
+    def test_the_message_prints_that_output_verbatim(self):
+        self.assertIn("{{ score.stdout }}", ma.score_message())
+
+    def test_it_sends_to_the_same_chat_as_everything_else(self):
+        acts = self._auto()["action"]
+        chats = [a["data"]["chat_id"] for a in acts
+                 if isinstance(a, dict) and "chat_id" in a.get("data", {})]
+        self.assertTrue(chats)
+        for c in chats:
+            self.assertEqual(c, ma.CHAT)
 
 
 if __name__ == "__main__":
