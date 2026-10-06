@@ -298,6 +298,16 @@ the ones in the code.
 | `RADAR_LOG` | `/config/www/radar/forecast_log.jsonl` | |
 | `RADAR_LOG_MAX_BYTES` | `4194304` | trimmed to the newest half past this |
 
+**Echo motion** — from two frames; see "Which model is right" for what it feeds
+
+| Var | Default | Notes |
+|---|---|---|
+| `RADAR_ECHO_GRID` | `64` | cells across for the echo mask |
+| `RADAR_ECHO_MAX_SHIFT` | `10` | cells searched per frame — bounds the fastest resolvable motion |
+| `RADAR_ECHO_MIN_CELLS` | `6` | below this there is too little echo to answer |
+| `RADAR_ECHO_MIN_OVERLAP` | `6` | below this the match is a guess, so no answer is given |
+| `RADAR_ECHO_MIN_MARGIN` | `3` | cells a shift must explain beyond standing still, or the motion is called unmeasurable |
+
 **Run safety**
 
 | Var | Default | Notes |

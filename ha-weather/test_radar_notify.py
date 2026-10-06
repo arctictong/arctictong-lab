@@ -23,7 +23,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import radar_notify as rn
-from PIL import Image
+from PIL import Image, ImageDraw
 
 HOME_LAT, HOME_LON = rn.HOME_LAT, rn.HOME_LON
 
@@ -1502,6 +1502,166 @@ class TestReadmeDocumentsEveryOverride(unittest.TestCase):
                 self.assertIn(var, readme)
         self.assertIn("score_forecast.py", readme,
                       "the README must point at what tunes these")
+
+
+class TestRainMotion(unittest.TestCase):
+    """Where the echo mass is and where it is going.
+
+    Synthetic frames with a known displacement, so the direction and the speed
+    can be checked against arithmetic rather than against the radar's opinion.
+    """
+
+    SIZE = 320                       # small: echo_cells classifies every pixel
+    MPP = 300.0                      # 300 m/px -> 320 px = 96 km across
+    GRID = 64
+    DT = 600.0                       # 10 minutes between frames
+    # one cell = 320/64 px = 5 px = 1.5 km
+    CELL_KM = (SIZE / 64.0) * MPP / 1000.0
+
+    def _blob(self, cx, cy, r=40, colour=None):
+        im = Image.new("RGBA", (self.SIZE, self.SIZE), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r],
+                  fill=tuple(colour or rn._RAMP[9]) + (255,))
+        return im
+
+    def _moved(self, dx_cells, dy_cells, r=40):
+        """Two frames with the blob shifted by whole cells."""
+        step = self.SIZE / float(self.GRID)
+        c = self.SIZE / 2.0
+        a = self._blob(c, c, r)
+        b = self._blob(c + dx_cells * step, c + dy_cells * step, r)
+        return a, b
+
+    def _motion(self, dx_cells, dy_cells, r=40):
+        a, b = self._moved(dx_cells, dy_cells, r)
+        return rn.rain_motion(a, b, self.MPP, self.DT, self.GRID)
+
+    def test_a_still_mass_is_not_moving(self):
+        out = self._motion(0, 0)
+        self.assertIsNotNone(out)
+        self.assertFalse(out["moving"])
+        self.assertEqual((out["dx_cells"], out["dy_cells"]), (0, 0))
+        self.assertEqual(out["speed_kmh"], 0.0)
+
+    def test_a_still_mass_reports_no_bearing(self):
+        """atan2(0, -0.0) is pi, which came out as due south. A mass that is
+        not moving has no direction, and inventing one is worse than none."""
+        out = self._motion(0, 0)
+        self.assertIsNone(out["bearing"])
+        self.assertEqual(out["compass_th"], "นิ่ง")
+        self.assertEqual(out["compass_en"], "STILL")
+        self.assertFalse(out["toward_home"])
+
+    def test_a_mass_that_only_shrinks_is_not_moving(self):
+        """The plateau case: every shift covers the smaller frame, so the
+        argmax is arbitrary. It must read as unmeasurable, not as motion."""
+        step = self.SIZE / float(self.GRID)
+        c = self.SIZE / 2.0
+        a = self._blob(c, c, 40)
+        b = self._blob(c, c, 12)          # same centre, much smaller
+        out = rn.rain_motion(a, b, self.MPP, self.DT, self.GRID)
+        self.assertIsNotNone(out)
+        self.assertFalse(out["moving"],
+                         "a shrinking mass was reported as moving")
+
+    def test_eastward_motion_reads_as_east(self):
+        out = self._motion(2, 0)
+        self.assertEqual(out["dx_cells"], 2)
+        self.assertEqual(out["bearing"], 90)
+        self.assertEqual(out["compass_en"], "E")
+
+    def test_southward_motion_reads_as_south(self):
+        """Image y grows downward, so a positive dy is south, not north."""
+        out = self._motion(0, 2)
+        self.assertEqual(out["bearing"], 180)
+        self.assertEqual(out["compass_en"], "S")
+
+    def test_westward_motion_reads_as_west(self):
+        out = self._motion(-2, 0)
+        self.assertEqual(out["bearing"], 270)
+        self.assertEqual(out["compass_en"], "W")
+
+    def test_northward_motion_reads_as_north(self):
+        out = self._motion(0, -2)
+        self.assertEqual(out["bearing"], 0)
+        self.assertEqual(out["compass_en"], "N")
+
+    def test_diagonal_motion_lands_in_the_right_octant(self):
+        out = self._motion(2, -2)
+        self.assertEqual(out["compass_en"], "NE")
+        self.assertEqual(out["bearing"], 45)
+
+    def test_the_speed_is_the_displacement_over_the_interval(self):
+        out = self._motion(3, 0)
+        expected = (3 * self.CELL_KM) / (self.DT / 3600.0)
+        self.assertAlmostEqual(out["speed_kmh"], round(expected, 1), places=1)
+        self.assertGreater(out["speed_kmh"], 0.0)
+
+    def test_a_mass_far_from_home_is_reported_twice(self):
+        out = self._motion(0, 0, r=24)
+        self.assertIsNotNone(out)
+        # a blob at the centre has its nearest echo close and its mass at 0
+        self.assertLess(out["nearest_km"], out["distance_km"] + 12.0)
+
+    def test_a_mass_in_the_north_moving_south_is_closing(self):
+        step = self.SIZE / float(self.GRID)
+        c = self.SIZE / 2.0
+        a = self._blob(c, c - 10 * step, 32)
+        b = self._blob(c, c - 8 * step, 32)
+        out = rn.rain_motion(a, b, self.MPP, self.DT, self.GRID)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["compass_en"], "S")
+        self.assertTrue(out["toward_home"], "closing rain read as moving away")
+        self.assertGreater(out["approach_kmh"], 0)
+
+    def test_a_mass_in_the_north_moving_north_is_not_closing(self):
+        step = self.SIZE / float(self.GRID)
+        c = self.SIZE / 2.0
+        a = self._blob(c, c - 8 * step, 32)
+        b = self._blob(c, c - 10 * step, 32)
+        out = rn.rain_motion(a, b, self.MPP, self.DT, self.GRID)
+        self.assertIsNotNone(out)
+        self.assertFalse(out["toward_home"], "receding rain read as coming")
+        self.assertLess(out["approach_kmh"], 0)
+
+    def test_an_empty_sky_gives_no_answer(self):
+        """A guess dressed as a measurement is worse than no measurement."""
+        empty = Image.new("RGBA", (self.SIZE, self.SIZE), (0, 0, 0, 0))
+        self.assertIsNone(rn.rain_motion(empty, empty, self.MPP, self.DT,
+                                         self.GRID))
+
+    def test_a_speck_of_echo_gives_no_answer(self):
+        """Below ECHO_MIN_CELLS there is not enough to measure a motion, and a
+        guess dressed as a measurement is worse than none."""
+        a, b = self._moved(1, 0, r=2)
+        self.assertIsNone(rn.rain_motion(a, b, self.MPP, self.DT, self.GRID))
+
+    def test_the_min_cell_guard_is_what_stops_a_speck(self):
+        """Pin the threshold, so the test above cannot pass for the wrong
+        reason - e.g. because the blob vanished instead of being too small."""
+        a, b = self._moved(1, 0, r=2)
+        self.assertLess(len(rn.echo_cells(a, self.GRID)), rn.ECHO_MIN_CELLS)
+
+    def test_a_zero_interval_is_refused_rather_than_divided_by(self):
+        a, b = self._moved(2, 0)
+        self.assertIsNone(rn.rain_motion(a, b, self.MPP, 0.0, self.GRID))
+
+    def test_a_mass_that_vanishes_gives_no_answer(self):
+        a, _ = self._moved(0, 0)
+        empty = Image.new("RGBA", (self.SIZE, self.SIZE), (0, 0, 0, 0))
+        self.assertIsNone(rn.rain_motion(a, empty, self.MPP, self.DT,
+                                         self.GRID))
+
+    def test_every_bearing_gets_a_compass_point(self):
+        self.assertEqual(len(rn.COMPASS_TH), 8)
+        self.assertEqual(len(rn.COMPASS_EN), 8)
+        for bearing, want in ((0, "N"), (45, "NE"), (90, "E"), (135, "SE"),
+                              (180, "S"), (225, "SW"), (270, "W"),
+                              (315, "NW"), (350, "N"), (10, "N")):
+            self.assertEqual(
+                rn.COMPASS_EN[int((bearing + 22.5) // 45) % 8], want,
+                "bearing %d mapped wrong" % bearing)
 
 
 if __name__ == "__main__":

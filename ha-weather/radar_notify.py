@@ -401,6 +401,156 @@ def class_histogram(img, mpp, bands, grid=None):
             for k in keys}
 
 
+# --- motion of the echo mass ------------------------------------------------
+# A centroid alone is not enough: with two cells, the centroid is their average
+# and moves for reasons that have nothing to do with the wind. Instead the mask
+# of the older frame is slid over the newer one and the offset with the most
+# overlap wins - a coarse, cheap phase correlation that survives more than one
+# cell, because the dominant coherent motion still produces the tallest peak.
+ECHO_GRID = int(os.environ.get("RADAR_ECHO_GRID", "64"))
+ECHO_MAX_SHIFT = int(os.environ.get("RADAR_ECHO_MAX_SHIFT", "10"))
+ECHO_MIN_CELLS = int(os.environ.get("RADAR_ECHO_MIN_CELLS", "6"))
+ECHO_MIN_OVERLAP = int(os.environ.get("RADAR_ECHO_MIN_OVERLAP", "6"))
+# A shift must explain at least this many more cells than standing still does,
+# or it is not believed: a shrinking mass makes the peak a plateau, and the
+# motion is then unmeasurable rather than zero.
+ECHO_MIN_MARGIN = int(os.environ.get("RADAR_ECHO_MIN_MARGIN", "3"))
+COMPASS_TH = ["เหนือ", "ตะวันออกเฉียงเหนือ", "ตะวันออก", "ตะวันออกเฉียงใต้",
+              "ใต้", "ตะวันตกเฉียงใต้", "ตะวันตก", "ตะวันตกเฉียงเหนือ"]
+COMPASS_EN = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def echo_cells(img, grid=None):
+    """Which cells of a grid x grid overlay hold a radar echo.
+
+    Classifies at the image's own resolution and marks the cell, rather than
+    reading one sampled pixel per cell: undersampling loses thin echoes, and a
+    lost echo is a lost motion vector.
+    """
+    grid = grid or ECHO_GRID
+    w, h = img.size
+    buf = img.convert("RGB").tobytes()
+    sx, sy = float(grid) / w, float(grid) / h
+    cells = set()
+    for y in range(h):
+        cy = int(y * sy)
+        row = y * w * 3
+        for x in range(w):
+            o = row + x * 3
+            if classify(buf[o], buf[o + 1], buf[o + 2]) >= 0:
+                cells.add((int(x * sx), cy))
+    return cells
+
+
+def best_shift(a, b, max_shift=None):
+    """The (dx, dy) that best maps the echoes of `a` onto those of `b`.
+
+    Returns ((dx, dy), overlap_at_best, overlap_at_zero). The zero-overlap is
+    needed because a shrinking mass makes the peak a *plateau* that includes
+    (0, 0): every shift can cover the smaller frame completely, so the argmax
+    is arbitrary and "not moving" would be an accident rather than a reading.
+
+    Scored by how many of a's cells land on one of b's after the shift. Only
+    occupied cells are visited, so the cost tracks the rain area rather than
+    the grid. Ties go to the smaller shift, so a mass that has not moved
+    reports no motion instead of an arbitrary direction.
+    """
+    max_shift = ECHO_MAX_SHIFT if max_shift is None else max_shift
+    if not a or not b:
+        return None
+    best, best_n, zero_n = (0, 0), -1, 0
+    for dy in range(-max_shift, max_shift + 1):
+        for dx in range(-max_shift, max_shift + 1):
+            n = 0
+            for (x, y) in a:
+                if (x + dx, y + dy) in b:
+                    n += 1
+            if dx == 0 and dy == 0:
+                zero_n = n
+            if (n > best_n
+                    or (n == best_n
+                        and abs(dx) + abs(dy) < abs(best[0]) + abs(best[1]))):
+                best, best_n = (dx, dy), n
+    return best, best_n, zero_n
+
+
+def rain_motion(img_a, img_b, mpp, dt_s, grid=None):
+    """Where the echo mass is and where it is going.
+
+    `img_a` is the older frame and `img_b` the newer; both are mosaics centred
+    on home, so home is the image centre. Returns None when there is too little
+    echo for the answer to mean anything - a guess dressed as a measurement is
+    worse than no measurement.
+
+    Distances are to the mass (the centroid of the echoes), which is what an
+    ETA needs; `nearest_km` is separately how close any echo is. `approach_kmh`
+    is the component of the motion along the mass-to-home direction, positive
+    when closing - the number that decides "coming" versus "going".
+    """
+    grid = grid or ECHO_GRID
+    if dt_s <= 0 or mpp <= 0:
+        return None
+    a = echo_cells(img_a, grid)
+    b = echo_cells(img_b, grid)
+    if len(a) < ECHO_MIN_CELLS or len(b) < ECHO_MIN_CELLS:
+        return None
+    found = best_shift(a, b, ECHO_MAX_SHIFT)
+    if found is None:
+        return None
+    (dx, dy), overlap, zero = found
+    if overlap < ECHO_MIN_OVERLAP:
+        return None
+
+    w = img_b.size[0]
+    cell_km = (w / float(grid)) * mpp / 1000.0
+    hours = dt_s / 3600.0
+
+    hx = hy = grid / 2.0
+    cx = sum(x for x, _ in b) / float(len(b))
+    cy = sum(y for _, y in b) / float(len(b))
+    gx, gy = hx - cx, hy - cy
+    gap = math.hypot(gx, gy)
+
+    # A shift is only believed when it explains strictly more than standing
+    # still does. Otherwise the peak is either (0,0) or a plateau that contains
+    # it - a mass that shrank rather than moved - and the honest answer is that
+    # the motion is not measurable. Reporting a bearing here would be inventing
+    # one: atan2(0, -0.0) is not even defined, and came out as due south.
+    still = (dx == 0 and dy == 0) or (overlap - zero) < ECHO_MIN_MARGIN
+    if still:
+        return {
+            "moving": False,
+            "dx_cells": 0, "dy_cells": 0,
+            "overlap": overlap, "zero_overlap": zero, "cells": len(b),
+            "speed_kmh": 0.0, "bearing": None,
+            "compass_th": "นิ่ง", "compass_en": "STILL",
+            "distance_km": round(gap * cell_km, 1),
+            "nearest_km": round(min(math.hypot(x - hx, y - hy) for x, y in b)
+                                * cell_km, 1),
+            "approach_kmh": 0.0, "toward_home": False,
+        }
+
+    vx, vy = dx * cell_km, dy * cell_km
+    speed = math.hypot(vx, vy) / hours
+    # image y grows downward, so north is -y; bearing is clockwise from north
+    bearing = (math.degrees(math.atan2(vx, -vy)) + 360.0) % 360.0
+    approach = ((vx * gx + vy * gy) / gap / hours) if gap > 0 else 0.0
+    idx = int((bearing + 22.5) // 45) % 8
+    return {
+        "moving": True,
+        "dx_cells": dx, "dy_cells": dy,
+        "overlap": overlap, "zero_overlap": zero, "cells": len(b),
+        "speed_kmh": round(speed, 1),
+        "bearing": int(round(bearing)),
+        "compass_th": COMPASS_TH[idx], "compass_en": COMPASS_EN[idx],
+        "distance_km": round(gap * cell_km, 1),
+        "nearest_km": round(min(math.hypot(x - hx, y - hy) for x, y in b)
+                            * cell_km, 1),
+        "approach_kmh": round(approach, 1),
+        "toward_home": approach > 0,
+    }
+
+
 def home_class(tile_url, z, cx, cy, mpp, tpx=TILE, radius_m=None):
     """Strongest echo class within `radius_m` of home, -1 when there is none.
 
