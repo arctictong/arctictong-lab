@@ -100,6 +100,17 @@ def om_points():
 TMD_BASE = "https://data.tmd.go.th/api/%s/v%s/?uid=api&ukey=api12345"
 HII_FF24 = ("https://api.hii.or.th/v2/4UQaYnf0Bx4fXPYyCdDRbqHyXH9Ixvd2nVUjaN1cLBY="
             "/warning/flashflood-24h")
+# ThaiWater's nearest rain gauge (about 7.8 km). The YAML has a REST sensor for
+# the same station; the script reads it too so the verification log is
+# self-contained and can be scored offline, without the HA recorder.
+THAIWATER_RAIN24 = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h"
+RAIN_STATION = os.environ.get("RADAR_RAIN_STATION", "BKK021")
+
+# Model-verification log: one JSON line per build, used to work out which
+# model is actually best here rather than assuming one. Trimmed to the newest
+# half once it passes the size cap (~200 days at 15-minute records).
+FORECAST_LOG = os.environ.get("RADAR_LOG", "/config/www/radar/forecast_log.jsonl")
+FORECAST_LOG_MAX = int(os.environ.get("RADAR_LOG_MAX_BYTES", str(4 * 1024 * 1024)))
 HOME_PROVINCE = "กรุงเทพ"
 HOME_DISTRICT = "บึงกุ่ม"
 TZ = timezone(timedelta(hours=7), "ICT")
@@ -499,7 +510,8 @@ def om_consensus(rows, models=None, need=None):
     models = list(models or OM_MODELS)
     need = OM_CONSENSUS if need is None else need
     empty = {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
-             "prob": None, "votes": [], "models": len(models), "need": need}
+             "prob": None, "votes": [], "models": len(models), "need": need,
+             "per_model": {}}
     if not rows:
         return empty
     series = (rows[0].get("minutely_15") or {})
@@ -525,6 +537,17 @@ def om_consensus(rows, models=None, need=None):
                  / max(1, len(models)), 2)
     prob = max((_om_val(home, "precipitation_probability_%s" % m, i)
                 for m in models for i in range(n)), default=0.0)
+    # per model, so the verification log can score each one separately rather
+    # than only the consensus they add up to
+    per_model = {}
+    for m in models:
+        per_model[m] = {
+            "mm60": round(sum(_om_val(home, "precipitation_%s" % m, i)
+                              for i in range(min(4, n))), 2),
+            "prob": int(max((_om_val(
+                home, "precipitation_probability_%s" % m, i)
+                for i in range(n)), default=0.0)),
+        }
     return {"ok": True,
             "rain_soon": first is not None,
             "minutes": None if first is None else first * 15,
@@ -532,7 +555,8 @@ def om_consensus(rows, models=None, need=None):
             "prob": int(prob),
             "votes": votes,
             "models": len(models),
-            "need": need}
+            "need": need,
+            "per_model": per_model}
 
 
 def openmeteo_nowcast():
@@ -558,7 +582,76 @@ def openmeteo_nowcast():
         log("open-meteo failed: %s" % e)
         return {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
                 "prob": None, "votes": [], "models": len(OM_MODELS),
-                "need": OM_CONSENSUS}
+                "need": OM_CONSENSUS, "per_model": {}}
+
+
+def thaiwater_rain24():
+    """ThaiWater 24 h rainfall for the nearest station (BKK021).
+
+    A real gauge about 7.8 km from home, and the only ground truth available.
+    It is a rolling 24 h total, so only a *positive* change between two reads
+    means rain actually fell; a zero or negative change is ambiguous, which is
+    why the verification log also records the radar flag.
+    """
+    try:
+        d = json.loads(fetch(THAIWATER_RAIN24))
+        for r in d.get("data") or []:
+            st = r.get("station") or {}
+            if st.get("tele_station_oldcode") == RAIN_STATION:
+                v = r.get("rain_24h")
+                return None if v is None else float(v)
+        log("thaiwater: station %s not in the response" % RAIN_STATION)
+    except Exception as e:
+        log("thaiwater failed: %s" % e)
+    return None
+
+
+def forecast_record(summary):
+    """One line of the model-verification log.
+
+    Kept small on purpose: the timestamp, the independent observations (radar
+    at home, the gauge total), and each model's own next-hour numbers. The
+    gauge is a rolling 24 h total so only its positive changes are usable; the
+    radar flag is what makes a dry hour count as dry at all.
+
+    The point is to answer, after a few weeks, which model is actually best at
+    this location - instead of trusting a vendor's reputation for it.
+    """
+    return {
+        "t": summary.get("updated"),
+        "rain_now": bool(summary.get("rain_now")),
+        "cover30": summary.get("coverage_30km"),
+        "gauge24": summary.get("rain24_gauge"),
+        "models": summary.get("om_models"),
+        "need": summary.get("om_need"),
+        "m": {k: {"mm60": v.get("mm60"), "prob": v.get("prob")}
+              for k, v in (summary.get("om_per_model") or {}).items()},
+    }
+
+
+def append_forecast_log(record, path=None, max_bytes=None):
+    """Append one JSON line, trimming the file when it grows too large.
+
+    The append itself is atomic enough (a single small write, and the only
+    reader tolerates a partial last line); the trim is not, but losing one
+    15-minute sample to a crash is not worth a second temp file and rename.
+    """
+    path = path or FORECAST_LOG
+    max_bytes = FORECAST_LOG_MAX if max_bytes is None else max_bytes
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+        if max_bytes and os.path.getsize(path) > max_bytes:
+            with open(path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+            keep = lines[len(lines) // 2:]           # drop the oldest half
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.writelines(keep)
+            log("forecast log trimmed to %d lines" % len(keep))
+    except Exception as e:
+        log("forecast log write failed: %s" % e)
 
 
 def hii_flashflood_watch():
@@ -847,6 +940,8 @@ def build():
     tmd = carry_forward(tmd_values, tmd_failed, prev)
     if tmd_failed:
         log("tmd keys held from previous run: %s" % sorted(tmd_failed))
+    # a real gauge, for the model-verification log; None when unreachable
+    gauge24 = thaiwater_rain24()
 
     # ---------------- annotations ----------------
     d = ImageDraw.Draw(canvas, "RGBA")
@@ -941,10 +1036,13 @@ def build():
         "om_need": om["need"],
         "om_votes": om["votes"],
         "om_prob": om["prob"],
+        "om_per_model": om["per_model"],
+        "rain24_gauge": gauge24,
         "flash_flood_watch": ff_watch,
     }
     summary.update(tmd)
     write_atomic(SUMMARY, json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+    append_forecast_log(forecast_record(summary))
     log("saved %s (%dB) z=%s/%dpx %.0fm/px view=%.0fkm cls=%s cover=%.1f%% soon=%s(%smin) "
         "mm60=%s approaching=%s in %.1fs"
         % (OUT, os.path.getsize(OUT), zoom, tile_px, mpp, view_km, LEVEL_TH[cls30],

@@ -1245,5 +1245,71 @@ class TestRunBudget(unittest.TestCase):
         self.assertIn("set_deadline()", src)
 
 
+class TestForecastLog(unittest.TestCase):
+    """The log is how the model choice stops being a guess, so what it records
+    and how it stays bounded both matter."""
+
+    SUMMARY = {
+        "updated": "2026-10-06T12:15:03+07:00",
+        "rain_now": True, "coverage_30km": 95.59, "rain24_gauge": 6.4,
+        "om_models": 3, "om_need": 2,
+        "om_per_model": {"ecmwf_ifs025": {"mm60": 0.4, "prob": 76},
+                         "icon_seamless": {"mm60": 0.1, "prob": 66},
+                         "gfs_seamless": {"mm60": 0.4, "prob": 89}},
+    }
+
+    def test_the_record_keeps_what_the_scorer_needs(self):
+        r = rn.forecast_record(self.SUMMARY)
+        self.assertEqual(r["t"], self.SUMMARY["updated"])
+        self.assertTrue(r["rain_now"])
+        self.assertEqual(r["gauge24"], 6.4)
+        self.assertEqual(r["need"], 2)
+        self.assertEqual(sorted(r["m"]), ["ecmwf_ifs025", "gfs_seamless",
+                                          "icon_seamless"])
+        self.assertEqual(r["m"]["gfs_seamless"], {"mm60": 0.4, "prob": 89})
+
+    def test_a_summary_missing_the_optional_fields_still_records(self):
+        r = rn.forecast_record({"updated": "x"})
+        self.assertEqual(r["m"], {})
+        self.assertFalse(r["rain_now"])
+        self.assertIsNone(r["gauge24"])
+
+    def test_each_build_appends_one_line(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "log.jsonl")
+        for _ in range(3):
+            rn.append_forecast_log(rn.forecast_record(self.SUMMARY), path)
+        with open(path, encoding="utf-8") as fh:
+            lines = [l for l in fh if l.strip()]
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(json.loads(lines[0])["t"], self.SUMMARY["updated"])
+
+    def test_the_log_is_trimmed_once_it_passes_the_cap(self):
+        """Unbounded growth would be a slow disk leak; the newest half is kept
+        so the recent weeks always survive."""
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "log.jsonl")
+        for i in range(60):
+            rec = rn.forecast_record(dict(self.SUMMARY,
+                                          updated="2026-10-06T12:%02d:00" % i))
+            rn.append_forecast_log(rec, path, max_bytes=3000)
+        with open(path, encoding="utf-8") as fh:
+            lines = [l for l in fh if l.strip()]
+        self.assertLess(len(lines), 60, "the log was never trimmed")
+        self.assertGreater(len(lines), 1, "trimming left nothing behind")
+        # the newest record must survive the trim
+        self.assertEqual(json.loads(lines[-1])["t"], "2026-10-06T12:59:00")
+
+    def test_an_unwritable_path_is_logged_not_fatal(self):
+        """A log failure must never take the build down with it."""
+        rn.append_forecast_log({"t": "x"},
+                               os.path.join("Z:\\", "nope", "log.jsonl"))
+
+    def test_build_calls_the_logger(self):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "radar_notify.py"), encoding="utf-8").read()
+        self.assertIn("append_forecast_log(forecast_record(summary))", src)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
