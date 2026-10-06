@@ -139,7 +139,8 @@ the first few weeks.
 
 ```
 updated, frame_time, radar_zoom, radar_tile_px, radar_mpp, view_km, base_zoom, radar_ok,
-rain_now, rain_soon, rain_soon_in_min, rain_next_60min_mm, approaching,
+rain_now, rain_near, rain_now_class, rain_now_label, rain_soon, rain_soon_in_min,
+rain_next_60min_mm, rain_past_60min_mm, approaching,
 coverage_30km, coverage_inner15km, trend_inner15km,
 rain_class_30km, rain_class_label, rain_class_label_en,
 rainviewer_nowcast, openmeteo_ok, om_models, om_need, om_votes, om_prob,
@@ -286,7 +287,8 @@ the ones in the code.
 | `RADAR_OM_RAIN_MM15` | `0.1` | mm in a slot that counts as rain |
 | `RADAR_OM_PROB_PCT` | `50` | chance that also counts as rain |
 | `RADAR_OM_NEIGHBOUR` | `0.05` | degrees; the 3×3 spans ~11 km |
-| `RADAR_OM_HORIZON` | `8` | 15-minute slots (2 h) |
+| `RADAR_OM_HORIZON` | `8` | 15-minute slots ahead (2 h) |
+| `RADAR_OM_PAST` | `4` | 15-minute slots behind (1 h) — this is the shift: past slots are prepended, so "now" is this index |
 
 **Verification log**
 

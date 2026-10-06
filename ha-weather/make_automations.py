@@ -133,6 +133,18 @@ def tmd_text(label, entity):
             "{%% endif %%}" % (entity, MISSING_JINJA, label, entity))
 
 
+def past_line():
+    """The hour behind, shown only when something actually fell.
+
+    -1 means the fetch failed and 0 means it was dry; neither is worth a line,
+    and printing either would be noise on a mostly-dry dashboard.
+    """
+    return ("{% set p = states('sensor.rain_past_60min_mm')|float(-1) %}"
+            "{% if p > 0 %}"
+            "ฝน 1 ชม. ที่ผ่านมา: {{ p|round(1) }} มม.\n"
+            "{% endif %}")
+
+
 SUMMARY_CAPTION = (
     "🌦️ สรุปอากาศบ้าน (บึงกุ่ม)\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
@@ -142,7 +154,8 @@ SUMMARY_CAPTION = (
     + " (" + value_or("sensor.pm25_level", empty="-") + ")\n"
     "PM2.5 สถานี PCD (วัดจริง): " + value_or("sensor.pm25_pcd", " µg/m³") + "\n"
     "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm") + "\n"
-    "เรดาร์ 30 กม.: {{ 'ฝนตกที่บ้าน' if is_state('binary_sensor.radar_rain_now','on') "
+    + past_line()
+    + "เรดาร์ 30 กม.: {{ 'ฝนตกที่บ้าน' if is_state('binary_sensor.radar_rain_now','on') "
     "else ('ฝนกำลังจะมา' if is_state('binary_sensor.radar_rain_approaching','on') else 'ยังไม่มีฝน') }}"
     + " (" + value_or("sensor.radar_rain_near", "%", empty="-") + ")"
     + has_rain_level() + "\n"

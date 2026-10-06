@@ -125,6 +125,7 @@ RAIN_CARD = {
     "entities": [
         {"entity": "sensor.rain_at_home", "name": "ความแรงที่บ้าน"},
         {"entity": "sensor.radar_rain_near", "name": "ฝนใน 30 กม."},
+        {"entity": "sensor.rain_past_60min_mm", "name": "ฝน 1 ชม. ที่ผ่านมา"},
         {"entity": "sensor.rain24_home", "name": "ฝน 24 ชม. (สถานีบ้าน)"},
     ],
 }

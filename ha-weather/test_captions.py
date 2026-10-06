@@ -37,6 +37,7 @@ LIVE = {
     "sensor.radar_rain_class": "ฝนปานกลาง",
     "sensor.rain_at_home": "ไม่มีฝน",
     "sensor.rain_next_60min_mm": "0",
+    "sensor.rain_past_60min_mm": "0",
     "sensor.rain_soon_in_min": "-1",
     "binary_sensor.flash_flood_watch": "off",
     "sensor.tmd_rain_24h_pct": "80",
@@ -217,7 +218,7 @@ class TestNonTmdSensorsAreFiltered(unittest.TestCase):
 
     # the non-TMD sensors every caption reads, and where they surface
     WATCHED = ["sensor.pm25_home", "sensor.pm25_pcd", "sensor.rain24_home",
-               "sensor.rain_next_60min_mm"]
+               "sensor.rain_next_60min_mm", "sensor.rain_past_60min_mm"]
 
     def test_no_sentinel_reaches_the_summary_caption(self):
         for entity in self.WATCHED:
@@ -472,6 +473,31 @@ class TestRainWordingMatchesTheEvidence(unittest.TestCase):
         states["sensor.rain_at_home"] = "unavailable"
         out = render(ma.RAIN_NOW_CAPTION, states)
         self.assertNotIn("unavailable", out)
+
+
+class TestPastHourLine(unittest.TestCase):
+    """"Rain in the last hour" is only news when it actually rained. A dry
+    hour and a failed fetch must both produce no line at all, not a zero and
+    not a -1."""
+
+    def _out(self, value):
+        states = dict(LIVE)
+        states["sensor.rain_past_60min_mm"] = value
+        return render(ma.SUMMARY_CAPTION, states)
+
+    def test_shown_when_rain_fell(self):
+        self.assertIn("ฝน 1 ชม. ที่ผ่านมา: 1.5", self._out("1.5"))
+
+    def test_hidden_when_the_hour_was_dry(self):
+        self.assertNotIn("ที่ผ่านมา", self._out("0"))
+
+    def test_hidden_when_the_fetch_failed(self):
+        out = self._out("-1")
+        self.assertNotIn("ที่ผ่านมา", out)
+        self.assertNotIn("-1", out)
+
+    def test_hidden_when_the_sensor_is_unknown(self):
+        self.assertNotIn("ที่ผ่านมา", self._out("unknown"))
 
 
 if __name__ == "__main__":

@@ -93,9 +93,14 @@ OM_RAIN_MM15 = float(os.environ.get("RADAR_OM_RAIN_MM15", "0.1"))  # mm / 15 min
 OM_PROB_PCT = float(os.environ.get("RADAR_OM_PROB_PCT", "50"))     # percent
 OM_NEIGHBOUR_DEG = float(os.environ.get("RADAR_OM_NEIGHBOUR", "0.05"))  # ~5.5 km
 OM_HORIZON_SLOTS = int(os.environ.get("RADAR_OM_HORIZON", "8"))    # 2 hours
+# How many 15-minute slots of the past to fetch. Verified against the API:
+# past_minutely_15=N prepends exactly N slots, so "now" is index N and no time
+# parsing is needed. Every index the consensus reads is relative to that.
+OM_PAST_SLOTS = int(os.environ.get("RADAR_OM_PAST", "4"))          # 1 hour back
 OM_URL = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
           "&minutely_15=precipitation,precipitation_probability"
           "&forecast_minutely_15=" + str(OM_HORIZON_SLOTS)
+          + "&past_minutely_15=" + str(OM_PAST_SLOTS)
           + "&models=" + ",".join(OM_MODELS)
           + "&timezone=Asia%2FBangkok")
 
@@ -504,29 +509,36 @@ def _om_val(row, key, i):
     return 0.0 if v is None else float(v)
 
 
-def om_consensus(rows, models=None, need=None):
+def om_consensus(rows, models=None, need=None, now_index=None, past=None):
     """Collapse the Open-Meteo response into one nowcast decision.
 
     `rows` is the list of per-point responses; home is the middle one.
 
-    For each 15-minute slot a model counts as predicting rain when *any* point
-    in the neighbourhood shows at least OM_RAIN_MM15 of precipitation, or at
-    least OM_PROB_PCT chance of it. Rain is then expected for the slot when at
-    least `need` models agree - the majority rule, so one outlier model cannot
-    raise an alert on its own.
+    **Indexing.** The request asks for OM_PAST_SLOTS slots of the past, which
+    Open-Meteo prepends, so index `now_index` is the current 15 minutes and
+    everything before it is history. Votes, the horizon and the ETA are all
+    measured from there; only the past-hour total looks behind it.
 
-    The amount is a separate question and is answered at home, not across the
-    neighbourhood: `mm60` is the multi-model mean over the first hour, because
-    "how much at the house" is a point question and the mean is the standard
-    ensemble estimate.
+    For each slot a model counts as predicting rain when *any* point in the
+    neighbourhood shows at least OM_RAIN_MM15 of precipitation, or at least
+    OM_PROB_PCT chance of it. Rain is then expected for the slot when at least
+    `need` models agree - the majority rule, so one outlier model cannot raise
+    an alert on its own.
+
+    The amounts are separate questions and are answered at home, not across the
+    neighbourhood: `mm60` is the multi-model mean over the first hour ahead and
+    `mm_past60` the mean over the hour behind, because "how much at the house"
+    is a point question and the mean is the standard ensemble estimate.
 
     Returns a dict; ok is False when the response holds nothing usable.
     """
     models = list(models or OM_MODELS)
     need = OM_CONSENSUS if need is None else need
+    now_index = OM_PAST_SLOTS if now_index is None else now_index
+    past = OM_PAST_SLOTS if past is None else past
     empty = {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
-             "prob": None, "votes": [], "models": len(models), "need": need,
-             "per_model": {}}
+             "mm_past60": -1, "prob": None, "votes": [],
+             "models": len(models), "need": need, "per_model": {}}
     if not rows:
         return empty
     series = (rows[0].get("minutely_15") or {})
@@ -535,8 +547,9 @@ def om_consensus(rows, models=None, need=None):
         return empty
 
     home = rows[len(rows) // 2]
+    ahead = range(now_index, n)
     votes = []
-    for i in range(n):
+    for i in ahead:
         c = 0
         for m in models:
             amt = "precipitation_%s" % m
@@ -546,27 +559,33 @@ def om_consensus(rows, models=None, need=None):
                 c += 1
         votes.append(c)
 
-    first = next((i for i, v in enumerate(votes) if v >= need), None)
+    first = next((j for j, v in enumerate(votes) if v >= need), None)
+    ahead4 = list(range(now_index, min(now_index + 4, n)))
+    behind4 = list(range(max(0, now_index - past), now_index))
     mm60 = round(sum(_om_val(home, "precipitation_%s" % m, i)
-                     for m in models for i in range(min(4, n)))
+                     for m in models for i in ahead4)
                  / max(1, len(models)), 2)
+    mm_past = round(sum(_om_val(home, "precipitation_%s" % m, i)
+                        for m in models for i in behind4)
+                    / max(1, len(models)), 2)
     prob = max((_om_val(home, "precipitation_probability_%s" % m, i)
-                for m in models for i in range(n)), default=0.0)
+                for m in models for i in ahead), default=0.0)
     # per model, so the verification log can score each one separately rather
     # than only the consensus they add up to
     per_model = {}
     for m in models:
         per_model[m] = {
             "mm60": round(sum(_om_val(home, "precipitation_%s" % m, i)
-                              for i in range(min(4, n))), 2),
+                              for i in ahead4), 2),
             "prob": int(max((_om_val(
                 home, "precipitation_probability_%s" % m, i)
-                for i in range(n)), default=0.0)),
+                for i in ahead), default=0.0)),
         }
     return {"ok": True,
             "rain_soon": first is not None,
             "minutes": None if first is None else first * 15,
             "mm60": mm60,
+            "mm_past60": mm_past,
             "prob": int(prob),
             "votes": votes,
             "models": len(models),
@@ -596,8 +615,9 @@ def openmeteo_nowcast():
     except Exception as e:
         log("open-meteo failed: %s" % e)
         return {"ok": False, "rain_soon": False, "minutes": None, "mm60": -1,
-                "prob": None, "votes": [], "models": len(OM_MODELS),
-                "need": OM_CONSENSUS, "per_model": {}}
+                "mm_past60": -1, "prob": None, "votes": [],
+                "models": len(OM_MODELS), "need": OM_CONSENSUS,
+                "per_model": {}}
 
 
 def thaiwater_rain24():
@@ -935,6 +955,7 @@ def build():
     rain_soon = bool(om["rain_soon"])
     soon_min = om["minutes"]
     om_mm60 = om["mm60"]
+    om_past60 = om["mm_past60"]
     om_ok = bool(om["ok"])
     # -1 instead of null: HA's command_line platform turns a rendered "None"
     # into `unavailable`, so the sentinel keeps the sensor numeric.
@@ -942,9 +963,11 @@ def build():
         soon_min = -1
     if om_mm60 is None:
         om_mm60 = -1
-    log("open-meteo: %d/%d models, votes=%s, prob=%s%%, mm60=%s, eta=%s"
+    if om_past60 is None:
+        om_past60 = -1
+    log("open-meteo: %d/%d models, votes=%s, prob=%s%%, mm60=%s, past60=%s, eta=%s"
         % (max(om["votes"], default=0), om["models"], om["votes"], om["prob"],
-           om_mm60, soon_min))
+           om_mm60, om_past60, soon_min))
     # The alert fires on either signal - the model consensus OR the radar
     # trend - deliberately: a miss by one source must not mean no alert. An
     # echo within RAIN_NEAR_M also counts, but only while rain_now is false, so
@@ -1051,6 +1074,7 @@ def build():
         "rain_soon": rain_soon,
         "rain_soon_in_min": soon_min,
         "rain_next_60min_mm": om_mm60,
+        "rain_past_60min_mm": om_past60,
         "approaching": approaching,
         "coverage_30km": cover30,
         "coverage_inner15km": inner15,

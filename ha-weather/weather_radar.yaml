@@ -135,6 +135,16 @@ command_line:
       unit_of_measurement: "%"
       icon: mdi:percent-outline
       scan_interval: 300
+  # the hour behind, from the same Open-Meteo request. -1 means the fetch
+  # failed and the layout reads that as "unknown", not as "no rain fell".
+  - sensor:
+      name: "Rain past 60min mm"
+      unique_id: rain_past_60min_mm
+      command: "cat /config/www/radar/summary.json"
+      value_template: "{{ value_json.rain_past_60min_mm | default(-1, true) }}"
+      unit_of_measurement: "mm"
+      icon: mdi:history
+      scan_interval: 300
   - sensor:
       name: "Radar zoom"
       unique_id: radar_zoom

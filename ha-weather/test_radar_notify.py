@@ -797,31 +797,41 @@ class TestHiiTriState(unittest.TestCase):
                         "an HII outage cleared a standing flood watch")
 
 
-def om_payload(rows_spec, slots=8, models=None):
+def om_payload(rows_spec, slots=8, models=None, past=None, past_mm=0.0,
+               past_prob=0.0):
     """Build the response Open-Meteo returns for several points.
 
-    rows_spec: one dict per point, {model: {"mm": [...], "prob": [...]}}.
-    Home is the middle row, matching om_points().
+    `past` slots are prepended exactly as `past_minutely_15` does, so the tests
+    exercise the production indexing (now == OM_PAST_SLOTS) rather than a
+    future-only array the real request never returns. `slots` is the number of
+    *future* slots.
+
+    rows_spec: one dict per point, {model: {"mm": [...], "prob": [...],
+    "past_mm": ...}}. Home is the middle row, matching om_points().
     """
+    past = rn.OM_PAST_SLOTS if past is None else past
     models = models or list(rn.OM_MODELS)
     out = []
     for spec in rows_spec:
-        m15 = {"time": ["t%d" % i for i in range(slots)]}
+        m15 = {"time": (["p%d" % i for i in range(past)]
+                        + ["f%d" % i for i in range(slots)])}
         for model in models:
             s = spec.get(model) or {}
             m15["precipitation_%s" % model] = (
-                s.get("mm") or [0.0] * slots)
+                [s.get("past_mm", past_mm)] * past
+                + list(s.get("mm") or [0.0] * slots))
             m15["precipitation_probability_%s" % model] = (
-                s.get("prob") or [0.0] * slots)
+                [s.get("past_prob", past_prob)] * past
+                + list(s.get("prob") or [0.0] * slots))
         out.append({"minutely_15": m15})
     return out
 
 
-def om_rows(home, neighbours=None, slots=8, n=9):
+def om_rows(home, neighbours=None, slots=8, n=9, **kw):
     """9 rows with `home` in the middle and `neighbours` elsewhere."""
     rows = [neighbours or {} for _ in range(n)]
     rows[n // 2] = home
-    return om_payload(rows, slots=slots)
+    return om_payload(rows, slots=slots, **kw)
 
 
 class TestOmConsensus(unittest.TestCase):
@@ -952,6 +962,93 @@ class TestOmConsensus(unittest.TestCase):
         rows = om_rows(home)
         self.assertFalse(rn.om_consensus(rows, self.MODELS, 2)["rain_soon"])
         self.assertTrue(rn.om_consensus(rows, self.MODELS, 1)["rain_soon"])
+
+
+class TestPastHour(unittest.TestCase):
+    """The hour behind, from the same request. The risk this guards is the
+    indexing: past slots are prepended, so a horizon measured from 0 would
+    announce rain that has already fallen."""
+
+    MODELS = ("ecmwf_ifs025", "icon_seamless", "gfs_seamless")
+
+    def _one(self, model, mm=None, prob=None, past_mm=None, slots=8):
+        d = {"mm": mm or [0.0] * slots, "prob": prob or [0.0] * slots}
+        if past_mm is not None:
+            d["past_mm"] = past_mm
+        return {model: d}
+
+    def test_the_past_hour_is_summed_and_reported(self):
+        home = self._one("ecmwf_ifs025", past_mm=1.0)
+        home.update(self._one("icon_seamless", past_mm=1.0))
+        home.update(self._one("gfs_seamless", past_mm=1.0))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        # 4 past slots x 1.0 mm, averaged over 3 models
+        self.assertAlmostEqual(out["mm_past60"], 4.0, places=2)
+
+    def test_rain_only_in_the_past_does_not_trigger_the_nowcast(self):
+        """The whole point of the shift. Before the fix this would have read
+        the past as the future and alerted on rain that had already fallen."""
+        home = self._one("ecmwf_ifs025", past_mm=5.0)
+        home.update(self._one("icon_seamless", past_mm=5.0))
+        home.update(self._one("gfs_seamless", past_mm=5.0))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertFalse(out["rain_soon"],
+                         "past rain was counted as coming rain")
+        self.assertIsNone(out["minutes"])
+        self.assertEqual(out["votes"], [0] * 8)
+        self.assertAlmostEqual(out["mm_past60"], 20.0, places=2)
+
+    def test_rain_only_ahead_does_not_count_as_past(self):
+        home = self._one("ecmwf_ifs025", mm=[5.0] * 8)
+        home.update(self._one("icon_seamless", mm=[5.0] * 8))
+        home.update(self._one("gfs_seamless", mm=[5.0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertTrue(out["rain_soon"])
+        self.assertEqual(out["mm_past60"], 0.0)
+
+    def test_the_horizon_starts_at_now(self):
+        """Eight future slots are voted on, not twelve."""
+        out = rn.om_consensus(om_rows({}), self.MODELS, 2)
+        self.assertEqual(len(out["votes"]), 8)
+
+    def test_the_eta_is_measured_from_now(self):
+        home = self._one("ecmwf_ifs025", mm=[0, 0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        home.update(self._one("icon_seamless", mm=[0, 0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]))
+        home.update(self._one("gfs_seamless", mm=[0.0] * 8))
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertEqual(out["minutes"], 30,
+                         "the ETA was not relative to now")
+
+    def test_an_all_past_response_is_valid_and_dry(self):
+        """A response whose only rain is behind us is still ok, just dry."""
+        home = self._one("ecmwf_ifs025", past_mm=2.0)
+        out = rn.om_consensus(om_rows(home), self.MODELS, 2)
+        self.assertTrue(out["ok"])
+        self.assertFalse(out["rain_soon"])
+
+    def test_a_failed_fetch_reports_a_past_sentinel_too(self):
+        original = rn.fetch
+        rn.fetch = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            out = rn.openmeteo_nowcast()
+        finally:
+            rn.fetch = original
+        self.assertEqual(out["mm_past60"], -1)
+
+    def test_the_request_asks_for_the_past_window(self):
+        seen = {}
+
+        def grab(url, timeout=45):
+            seen["url"] = url
+            return json.dumps(om_rows({})).encode("utf-8")
+
+        original = rn.fetch
+        rn.fetch = grab
+        try:
+            rn.openmeteo_nowcast()
+        finally:
+            rn.fetch = original
+        self.assertIn("past_minutely_15=%d" % rn.OM_PAST_SLOTS, seen["url"])
 
 
 class TestOpenMeteoNowcast(unittest.TestCase):
