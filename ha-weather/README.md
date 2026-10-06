@@ -4,7 +4,7 @@ Rain radar + PM2.5 + nowcast "rain approaching home" alerts for Home Assistant,
 delivered to Telegram with a rendered map image.
 
 Home coordinates: **13.828773, 100.6545224** (Bueng Kum, Bangkok)
-Alert radius: **30 km** (plus 15 km inner ring and 60 km outer ring)
+Alert radius: **30 km** (solid ring) plus a **10 km** dashed inner ring and scale bar
 
 ## What is in this repo
 
@@ -14,8 +14,8 @@ Alert radius: **30 km** (plus 15 km inner ring and 60 km outer ring)
 | `weather_radar.yaml` | HA package: `shell_command`, all `command_line` sensors, REST sensors for PM2.5/rain, thresholds. |
 | `make_automations.py` | Creates/updates the 7 automations with Thai Telegram captions. |
 | `add_lovelace_view.py` | Adds the "ฝน & อากาศ" Lovelace view (idempotent, keeps existing views). |
-| `test_radar_notify.py` | 49 offline tests: geometry, palette/ramp, histogram, mosaic, tile-size probe, TMD carry-forward, home class. |
-| `test_captions.py` | 17 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`) can reach a message. |
+| `test_radar_notify.py` | 69 offline tests: geometry, palette/ramp, histogram, grid selection, mosaic, tile-size probe, TMD carry-forward, HII tri-state, the Open-Meteo sentinel, the YAML sentinel guards, home class. |
+| `test_captions.py` | 23 offline tests: every caption renders through real Jinja2, and no sentinel (`-1`, `"None"`, `unknown`, `unavailable`) can reach a message from a TMD **or** a PM2.5/rain/Open-Meteo sensor. |
 | `fonts/Sarabun-*.ttf` | Thai+Latin font so the image can render Thai labels. |
 
 Run the tests with `python test_radar_notify.py; python test_captions.py`
@@ -30,9 +30,9 @@ Run the tests with `python test_radar_notify.py; python test_captions.py`
 | Base map | OpenStreetMap tiles, restyled dark, cached 6 h in `/config/www/radar/cache` | |
 | Point nowcast | Open-Meteo `minutely_15=precipitation` (2 h @ 15 min) | primary "is rain coming" signal |
 | Rain nowcast | RainViewer `nowcast` frames when published | **discontinued** — the index reports 0 nowcast frames, so this path is dormant |
-| Rain trend | 5-frame coverage trend of the inner 15 km ring | measured at zoom ≤ 9 for speed |
+| Rain trend | 5-frame coverage trend of the inner 15 km ring | sampled at the selected zoom, capped at grid=256 for speed |
 | Official forecast | **TMD (กรมฝนหลวง)** `data.tmd.go.th/api/` with the public demo credentials `uid=api&ukey=api12345` | 24 h Bangkok narrative + %rain, 7-day %rain, official warnings |
-| Flash-flood watch | HII `api.hii.or.th` `warning/flashflood-24h` | |
+| Flash-flood watch | HII `api.hii.or.th` `warning/flashflood-24h` | tri-state: a failed fetch is *unknown*, so the previous value is held rather than reported as "no watch" |
 | PM2.5 | Open-Meteo air quality (at home) + PCD Air4Thai station `bkp77t` (`verify_ssl: false`) | GISTDA is behind Incapsula, not used |
 | Rain 24 h | ThaiWater `api-v3.thaiwater.net` station `BKK021` | |
 
@@ -134,9 +134,19 @@ python make_automations.py      # POSTs the 7 automations with Thai captions
 python add_lovelace_view.py     # adds the "ฝน & อากาศ" view
 ```
 
-Both scripts embed the HA URL + long-lived access token at the top — replace them
-before running elsewhere, and **revoke/replace any token that has been pasted into
-a chat or committed**.
+Both deploy scripts now read their credential from the environment — **never
+commit a token**. Export it first:
+
+```bash
+export HA_TOKEN='<long-lived access token>'      # PowerShell: $env:HA_TOKEN='...'
+python make_automations.py
+python add_lovelace_view.py
+```
+
+`HA_BASE` (default `http://192.168.1.248:8123`) and `HA_WS_URL` override the
+endpoints. Any token that has been pasted into a chat or committed once is
+compromised and **must be revoked** — removing it from a later commit does not
+remove it from git history.
 
 ## Automations
 
@@ -203,6 +213,28 @@ Rendering is driven by one number — the radar's ground resolution:
   `null` into `summary.json` and forcing `update_entity`. Every nullable field
   now has a sentinel (see the convention block at the top of
   `weather_radar.yaml`), and the captions filter sentinels independently.
+* **`rain_next_60min_mm` had the same hole and was missed by the first pass.**
+  `openmeteo_nowcast()` returned `None` for the total on failure and its
+  template had no `default()` guard, so an Open-Meteo outage would have put
+  `None mm` in every morning and evening message. The failure path now returns
+  the `-1` sentinel, the template carries `default(-1, true)`, and
+  `test_captions.py` covers the PM2.5/rain/Open-Meteo sensors rather than only
+  TMD. Minutes is deliberately left `None`: a radar estimate still competes
+  with it, and a `-1` would win that comparison and be reported as the ETA.
+* **Flash-flood is tri-state.** `hii_flashflood_watch()` returns `None` when the
+  feed cannot be read, and `carry_flag()` holds the previous value. A failed
+  fetch used to return `False`, i.e. "no watch", which for a warning product
+  reads as all-clear on no evidence. A genuine `False` still wins — a cleared
+  watch is news.
+* `latest.png` and `summary.json` are both written atomically (`write_atomic`),
+  so a Telegram send racing the build cannot attach a half-written image.
+* `class_histogram()` honours its `grid` argument. It used to overwrite it
+  unconditionally, so the trend loop's `grid=256` silently became 300/540.
+* `pick_tile_size()` can spend `5 sizes × 3 attempts × fetch(timeout=120)` ≈
+  30 min if the network times out rather than refusing, and
+  `shell_command.weather_radar_build` sets no `timeout:` — so HA's default
+  (~60 s) can kill the build before `write_atomic` runs, leaving the dashboard
+  serving stale data with no indication. Worth an explicit `timeout:`.
 * **RainViewer nowcast is discontinued** — `radar nowcast frames: 0`. The
   nowcast code path and `sensor.rain_soon_in_min` are therefore effectively
   dead: the sensor parks at `-1` ("unknown") and `binary_sensor.radar_rain_soon`

@@ -53,7 +53,7 @@ command_line:
       name: "Rain next 60min mm"
       unique_id: rain_next_60min_mm
       command: "cat /config/www/radar/summary.json"
-      value_template: "{{ value_json.rain_next_60min_mm }}"
+      value_template: "{{ value_json.rain_next_60min_mm | default(-1, true) }}"
       unit_of_measurement: "mm"
       state_class: measurement
       icon: mdi:weather-pouring

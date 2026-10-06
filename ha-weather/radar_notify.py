@@ -247,6 +247,18 @@ def classify(r, g, b):
     return _RAMP_CLASS[_RAMP[best]]
 
 
+def choose_grid(ref_px, requested, width):
+    """Sampling density for class_histogram.
+
+    An explicit `requested` wins - the trend loop caps it for speed - otherwise
+    aim for ~100+ samples across the reference circle, capped at the image
+    width. `requested` used to be overwritten unconditionally, so a caller that
+    passed a grid silently got the 300/540 default instead.
+    """
+    grid = requested or (300 if ref_px >= 100 else 540)
+    return min(grid, width)
+
+
 def class_histogram(img, mpp, bands, ref_km, grid=None):
     """Bucket echoes into intensity classes per radius band.
 
@@ -255,8 +267,7 @@ def class_histogram(img, mpp, bands, ref_km, grid=None):
     """
     w = img.size[0]
     ref_px = (ref_km * 1000.0) / mpp
-    grid = 300 if ref_px >= 100 else 540
-    grid = min(grid if grid else 512, img.size[0])
+    grid = choose_grid(ref_px, grid, img.size[0])
     small = img.convert("RGB").resize((grid, grid), Image.NEAREST)
     sx = float(grid) / w
     buf = small.tobytes()
@@ -384,10 +395,21 @@ def openmeteo_nowcast():
         return rain_soon, minutes, round(sum(p or 0 for p in precip[:4]), 2), True
     except Exception as e:
         log("open-meteo failed: %s" % e)
-        return False, None, None, False
+        # mm60 goes out as the -1 sentinel rather than null: command_line
+        # renders a null as the literal string "None" on
+        # sensor.rain_next_60min_mm, which then reaches every caption.
+        # minutes stays None because a radar estimate still competes with it in
+        # build(), and -1 would win that comparison and be reported as the ETA.
+        return False, None, -1, False
 
 
 def hii_flashflood_watch():
+    """True when HII lists a flash-flood watch covering home.
+
+    Tri-state: None means the feed could not be read. For a warning product
+    "we could not check" must never be rounded down to "all clear", so build()
+    holds the last known value instead of publishing False.
+    """
     try:
         d = json.loads(fetch(HII_FF24))
         for a in d.get("area") or []:
@@ -398,7 +420,7 @@ def hii_flashflood_watch():
         return False
     except Exception as e:
         log("hii flashflood failed: %s" % e)
-        return False
+        return None
 
 
 def tmd_forecast():
@@ -518,6 +540,16 @@ def carry_forward(fresh, failed, prev):
     return out
 
 
+def carry_flag(fresh, prev):
+    """Hold the last known value for a tri-state warning flag.
+
+    `fresh` is True, False, or None for "could not check". A warning product
+    must never round unknown down to all-clear, so None holds `prev` instead of
+    publishing False. A genuine False still wins: a cleared watch is news.
+    """
+    return fresh if fresh is not None else bool(prev)
+
+
 def build():
     t0 = time.time()
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
@@ -635,9 +667,15 @@ def build():
 
     trend_up = bool(trend is not None and trend >= 3.0 and inner15 >= 1.0)
     approaching = bool((not rain_now) and (rain_soon or trend_up))
-    ff_watch = hii_flashflood_watch()
+    prev = read_previous_summary()
+    # A flash-flood feed failure is "unknown", never "no watch". Hold the last
+    # known value rather than publishing False, which reads as all-clear.
+    ff_fresh = hii_flashflood_watch()
+    ff_watch = carry_flag(ff_fresh, prev.get("flash_flood_watch"))
+    if ff_fresh is None:
+        log("hii flashflood unknown; holding flash_flood_watch=%s" % ff_watch)
     tmd_values, tmd_failed = tmd_forecast()
-    tmd = carry_forward(tmd_values, tmd_failed, read_previous_summary())
+    tmd = carry_forward(tmd_values, tmd_failed, prev)
     if tmd_failed:
         log("tmd keys held from previous run: %s" % sorted(tmd_failed))
 
@@ -702,7 +740,11 @@ def build():
             "nowcast Open-Meteo | พยากรณ์ TMD" % (base_zoom, zoom or 0, int(mpp)))
     d.text((size - 490, size - 26), note, font=f_small, fill=(255, 255, 255, 150))
 
-    canvas.convert("RGB").save(OUT, "PNG", optimize=True)
+    # atomic, like summary.json: a Telegram send that races this build must
+    # never attach a half-written PNG.
+    buf = io.BytesIO()
+    canvas.convert("RGB").save(buf, "PNG", optimize=True)
+    write_atomic(OUT, buf.getvalue())
 
     summary = {
         "updated": datetime.now(TZ).isoformat(),

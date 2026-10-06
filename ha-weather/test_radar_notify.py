@@ -14,6 +14,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -511,12 +512,6 @@ class TestCarryForward(unittest.TestCase):
         self.assertIsNone(
             rn.carry_forward(fresh, set(), prev)["tmd_7d_rain_pct"])
 
-    def test_every_tmd_key_has_a_sentinel(self):
-        """No TMD field may reach the sensors as null on the very first run,
-        so each one needs a readable stand-in in the YAML template."""
-        values, failed = {"tmd_24h": None}, set()
-        self.assertEqual(rn.carry_forward(values, failed, {})["tmd_24h"], None)
-
     def test_no_previous_file_is_not_fatal(self):
         original = rn.SUMMARY
         rn.SUMMARY = os.path.join(tempfile.gettempdir(), "no-such-summary.json")
@@ -586,6 +581,231 @@ class TestHomeClass(unittest.TestCase):
                                            74.2, 4096), -1)
         finally:
             rn.fetch = original
+
+
+class TestChooseGrid(unittest.TestCase):
+    """class_histogram's grid argument was overwritten unconditionally, so the
+    trend loop's grid=256 was silently ignored and the 300/540 default used
+    instead. The density is what the caller asked for, or it is a bug."""
+
+    def test_an_explicit_grid_wins(self):
+        self.assertEqual(rn.choose_grid(202.0, 256, 4096), 256,
+                         "the caller's grid was ignored again")
+
+    def test_default_density_targets_100_samples_across(self):
+        self.assertEqual(rn.choose_grid(202.0, None, 4096), 300)
+        self.assertEqual(rn.choose_grid(50.0, None, 4096), 540)
+
+    def test_never_exceeds_the_image_width(self):
+        self.assertEqual(rn.choose_grid(202.0, 4096, 950), 950)
+        self.assertEqual(rn.choose_grid(202.0, None, 200), 200)
+
+    def test_the_deployed_trend_call_asks_for_256(self):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "radar_notify.py"), encoding="utf-8").read()
+        self.assertIn("grid=256", src)
+
+
+class TestCarryFlag(unittest.TestCase):
+    """A tri-state warning flag: None means 'could not check', which must never
+    be rounded down to 'all clear'."""
+
+    def test_unknown_holds_the_previous_value(self):
+        self.assertTrue(rn.carry_flag(None, True))
+        self.assertFalse(rn.carry_flag(None, False))
+
+    def test_a_genuine_all_clear_wins(self):
+        self.assertFalse(rn.carry_flag(False, True),
+                         "a cleared watch must be announced, not held")
+
+    def test_a_genuine_watch_wins(self):
+        self.assertTrue(rn.carry_flag(True, False))
+
+    def test_nothing_known_yet_reads_as_off(self):
+        self.assertFalse(rn.carry_flag(None, None))
+
+
+class TestHiiTriState(unittest.TestCase):
+    """HII is a warning feed. A failure has to be distinguishable from 'no
+    watch', or the dashboard reports all-clear on no evidence."""
+
+    def _patch(self, value):
+        orig = rn.fetch
+        if isinstance(value, Exception):
+            def boom(*a, **k):
+                raise value
+            rn.fetch = boom
+        else:
+            rn.fetch = lambda *a, **k: value
+        return orig
+
+    def test_a_failed_fetch_is_unknown_not_all_clear(self):
+        orig = self._patch(RuntimeError("connection reset"))
+        try:
+            self.assertIsNone(rn.hii_flashflood_watch(),
+                              "a broken HII feed was reported as 'no watch'")
+        finally:
+            rn.fetch = orig
+
+    def test_a_malformed_body_is_unknown(self):
+        orig = self._patch(b"{not json")
+        try:
+            self.assertIsNone(rn.hii_flashflood_watch())
+        finally:
+            rn.fetch = orig
+
+    def test_no_listed_areas_is_a_genuine_false(self):
+        orig = self._patch(b'{"area": []}')
+        try:
+            self.assertIs(rn.hii_flashflood_watch(), False)
+        finally:
+            rn.fetch = orig
+
+    def test_a_listed_home_area_is_true(self):
+        payload = json.dumps({"area": [
+            {"province": rn.HOME_PROVINCE, "amphoe": rn.HOME_DISTRICT,
+             "tambon": ""}]}).encode("utf-8")
+        orig = self._patch(payload)
+        try:
+            self.assertIs(rn.hii_flashflood_watch(), True)
+        finally:
+            rn.fetch = orig
+
+    def test_an_unknown_becomes_the_previous_value(self):
+        """The build() contract, exercised end to end through both helpers."""
+        orig = self._patch(RuntimeError("connection reset"))
+        try:
+            fresh = rn.hii_flashflood_watch()
+        finally:
+            rn.fetch = orig
+        self.assertTrue(rn.carry_flag(fresh, True),
+                        "an HII outage cleared a standing flood watch")
+
+
+class TestOpenMeteoSentinel(unittest.TestCase):
+    """Open-Meteo going down must not write null for the rainfall total: a null
+    reaches sensor.rain_next_60min_mm as the literal string "None"."""
+
+    def test_failure_uses_the_mm_sentinel(self):
+        orig = rn.fetch
+        rn.fetch = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            soon, minutes, mm60, ok = rn.openmeteo_nowcast()
+        finally:
+            rn.fetch = orig
+        self.assertFalse(ok)
+        self.assertEqual(mm60, -1, "a null would render as the string None")
+        self.assertIsNone(minutes,
+                          "minutes must stay None so a radar ETA can still win")
+
+    def test_a_dry_forecast_is_zero_not_a_sentinel(self):
+        payload = json.dumps({"minutely_15": {
+            "precipitation": [0, 0, 0, 0, 0, 0]}}).encode("utf-8")
+        orig = rn.fetch
+        rn.fetch = lambda *a, **k: payload
+        try:
+            soon, minutes, mm60, ok = rn.openmeteo_nowcast()
+        finally:
+            rn.fetch = orig
+        self.assertTrue(ok)
+        self.assertFalse(soon)
+        self.assertEqual(mm60, 0.0)
+        self.assertIsNone(minutes)
+
+
+class TestYamlSentinels(unittest.TestCase):
+    """summary.json can hold JSON null for a source that failed this run, and
+    HA's command_line platform renders a missing key as the literal string
+    "None", which then reaches the dashboard and the Telegram group. Every
+    template that reads a nullable field needs a default() guard.
+
+    This replaces a test that asserted None == None: it named all the TMD keys
+    but never read the YAML, so it passed while rain_next_60min_mm shipped
+    "None" to the group.
+    """
+
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    # every summary.json key that can be null when its source fails
+    NULLABLE = ["radar_zoom", "rain_next_60min_mm", "tmd_24h_rain_pct",
+                "tmd_7d_rain_pct", "tmd_24h", "tmd_7d_desc", "tmd_warning"]
+
+    def _yaml(self):
+        with open(os.path.join(self.HERE, "weather_radar.yaml"),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_every_nullable_template_has_a_default(self):
+        text = self._yaml()
+        for key in self.NULLABLE:
+            with self.subTest(key=key):
+                # \b stops tmd_24h from also matching tmd_24h_rain_pct
+                pat = re.compile(r"value_json\.%s\b" % re.escape(key))
+                lines = [l for l in text.splitlines() if pat.search(l)]
+                self.assertTrue(lines, "no value_template reads %s" % key)
+                for l in lines:
+                    self.assertIn("default(", l,
+                                  "%s can be null but has no default() "
+                                  "guard:\n  %s" % (key, l.strip()))
+
+    def test_the_second_argument_is_present(self):
+        """default(x) alone replaces only an undefined key, not an explicit
+        null. The `true` is what makes the guard work; do not drop it."""
+        text = self._yaml()
+        guarded = [l for l in text.splitlines()
+                   if "value_json." in l and "default(" in l]
+        self.assertTrue(guarded, "no guarded templates found at all")
+        for l in guarded:
+            with self.subTest(line=l.strip()):
+                self.assertIn(", true)", l)
+
+
+class TestNoHardcodedCredential(unittest.TestCase):
+    """A JWT committed to the repo is a live credential in git history. The
+    repo's own convention (dashboard/README.md) forbids embedding keys."""
+
+    HERE = os.path.dirname(os.path.abspath(__file__))
+
+    def test_no_script_embeds_a_jwt(self):
+        for name in ("make_automations.py", "add_lovelace_view.py",
+                     "radar_notify.py", "test_radar_notify.py",
+                     "test_captions.py"):
+            with self.subTest(file=name):
+                with open(os.path.join(self.HERE, name),
+                          encoding="utf-8") as fh:
+                    src = fh.read()
+                self.assertIsNone(
+                    re.search(r"eyJ[A-Za-z0-9_\-]{10,}\.", src),
+                    "%s embeds what looks like a JWT" % name)
+
+    def test_the_deploy_scripts_read_the_token_from_the_environment(self):
+        for name in ("make_automations.py", "add_lovelace_view.py"):
+            with self.subTest(file=name):
+                with open(os.path.join(self.HERE, name),
+                          encoding="utf-8") as fh:
+                    src = fh.read()
+                self.assertIn("HA_TOKEN", src)
+                self.assertIn("require_token", src)
+
+
+class TestWriteAtomic(unittest.TestCase):
+    """summary.json and latest.png are read by HA and by Telegram while the
+    build may still be running, so neither may be replaced in place."""
+
+    def test_replaces_content_and_leaves_no_temp_file(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "out.bin")
+        rn.write_atomic(path, b"first")
+        rn.write_atomic(path, b"second")
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), b"second")
+        self.assertEqual(os.listdir(d), ["out.bin"],
+                         "an atomic write left a temp file behind")
+
+    def test_png_write_goes_through_write_atomic(self):
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "radar_notify.py"), encoding="utf-8").read()
+        self.assertIn("write_atomic(OUT", src,
+                      "latest.png is written non-atomically again")
 
 
 if __name__ == "__main__":

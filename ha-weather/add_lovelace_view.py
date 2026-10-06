@@ -5,13 +5,29 @@ re-running replaces the view it owns instead of duplicating it) and saves.
 Never touches existing views.
 """
 import json
+import os
 import time
 import urllib.request
 
 import websocket
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI3MDdjYjU5MDk0NzE0ZTRlODIzOWUyMjIzMDlhN2NlNiIsImlhdCI6MTc5MTE4ODMwMSwiZXhwIjoyMTA2NTQ4MzAxfQ.kbgES4h4XfYz29m406WsqgZZJmwLn18ZuiBVtJ_hQDA"
-URL = "ws://192.168.1.248:8123/api/websocket"
+
+def require_token():
+    """The HA long-lived token, read from the environment.
+
+    Never hardcode it: a committed token is a live credential sitting in git
+    history for anyone with repo access, and the repo's own convention
+    (dashboard/README.md: "ไม่มี key ฝังใน git") forbids it.
+    """
+    tok = os.environ.get("HA_TOKEN") or os.environ.get("HASS_TOKEN")
+    if not tok:
+        raise SystemExit(
+            "set HA_TOKEN in the environment before running this script "
+            "(the token must not live in the repo)")
+    return tok
+
+
+URL = os.environ.get("HA_WS_URL", "ws://192.168.1.248:8123/api/websocket")
 VIEW_ID = "ha-weather"
 
 VIEW = {
@@ -79,7 +95,7 @@ VIEW = {
 def main():
     ws = websocket.create_connection(URL, timeout=30)
     ws.recv()
-    ws.send(json.dumps({"type": "auth", "access_token": TOKEN}))
+    ws.send(json.dumps({"type": "auth", "access_token": require_token()}))
     auth = json.loads(ws.recv())
     if auth.get("type") != "auth_ok":
         raise SystemExit("auth failed: %s" % auth)
@@ -92,12 +108,14 @@ def main():
         ws.close()
         return 1
     cfg = resp["result"]
-    views = cfg.get("views") or []
-    print("current views:", [v.get("title") or v.get("path") for v in views])
+    # validate before use: the old order called cfg.get() first, so a non-dict
+    # config raised AttributeError instead of reaching this branch
     if not isinstance(cfg, dict) or "views" not in cfg:
         print("unexpected config shape:", type(cfg))
         ws.close()
         return 1
+    views = cfg.get("views") or []
+    print("current views:", [v.get("title") or v.get("path") for v in views])
 
     new_view = json.loads(json.dumps(VIEW))
     replaced = False

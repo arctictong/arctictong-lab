@@ -1,15 +1,54 @@
 import json
+import os
 import urllib.error
 import urllib.request
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI3MDdjYjU5MDk0NzE0ZTRlODIzOWUyMjIzMDlhN2NlNiIsImlhdCI6MTc5MTE4ODMwMSwiZXhwIjoyMTA2NTQ4MzAxfQ.kbgES4h4XfYz29m406WsqgZZJmwLn18ZuiBVtJ_hQDA"
-BASE = "http://192.168.1.248:8123"
+
+def require_token():
+    """The HA long-lived token, read from the environment.
+
+    Never hardcode it here: a committed token is a live credential sitting in
+    git history for anyone with repo access, and the repo's own convention
+    (dashboard/README.md: "ไม่มี key ฝังใน git") forbids it. Read lazily so that
+    importing this module - which the caption tests do - needs no credential.
+    """
+    tok = os.environ.get("HA_TOKEN") or os.environ.get("HASS_TOKEN")
+    if not tok:
+        raise SystemExit(
+            "set HA_TOKEN in the environment before running this script "
+            "(the token must not live in the repo)")
+    return tok
+
+
+BASE = os.environ.get("HA_BASE", "http://192.168.1.248:8123")
 CHAT = "1448647267"
 RADAR_FILE = "/config/www/radar/latest.png"
 
 ENABLED = {"condition": "state", "entity_id": "input_boolean.weather_alerts_enabled", "state": "on"}
 
-NOT_SET = ["unknown", "unavailable", "none", "ไม่มีเตือน", ""]
+# Every state a sensor can hold when it has no usable reading. One list, so a
+# new failure token is added in one place: the sentinel filters and the caption
+# helpers below all read from it.
+MISSING = ["unknown", "unavailable", "none", "null", "-1", "",
+           "ไม่มีข้อมูล", "ไม่มีเตือน"]
+
+
+def _jinja_list(items):
+    return "[" + ", ".join("'%s'" % i.replace("'", "") for i in items) + "]"
+
+
+MISSING_JINJA = _jinja_list(MISSING)
+
+
+def value_or(entity, unit="", empty="ไม่มีข้อมูล"):
+    """Jinja: the sensor's reading, or a stand-in when it has none.
+
+    Filters on the value in one place, so no caption can print the literal
+    string "None", "-1" or "unknown" at the Telegram group.
+    """
+    return ("{%% if states('%s')|lower not in %s %%}{{ states('%s') }}%s"
+            "{%% else %%}%s{%% endif %%}"
+            % (entity, MISSING_JINJA, entity, unit, empty))
 
 
 def send_photo(caption):
@@ -42,37 +81,42 @@ def has_rain_level():
 # the literal string "None" if a template ever loses its default() guard. All
 # three have to be filtered, or the caption ships the sentinel to the group.
 def tmd_pct(label, entity):
-    """A TMD percentage, or a readable stand-in when TMD could not be read."""
+    """A TMD percentage, or a readable stand-in when TMD could not be read.
+
+    Uses a numeric test rather than the shared missing-list: a percentage that
+    is not a number (a text state leaking in) must be replaced too. 0 is a real
+    forecast - a dry spell - so the test is >= 0, not > 0.
+    """
     return ("%s {%% if states('%s')|int(-1) >= 0 %%}{{ states('%s') }}%%"
             "{%% else %%}ไม่มีข้อมูล{%% endif %%}\n" % (label, entity, entity))
 
 
-def tmd_text(label, entity, empty):
+def tmd_text(label, entity):
     """A TMD text field, hidden rather than printed when it is missing."""
-    return ("{%% if states('%s') not in ['%s', '-1', 'None', 'unknown', "
-            "'unavailable', ''] %%}%s {{ states('%s') }}\n{%% endif %%}"
-            % (entity, empty, label, entity))
+    return ("{%% if states('%s')|lower not in %s %%}%s {{ states('%s') }}\n"
+            "{%% endif %%}" % (entity, MISSING_JINJA, label, entity))
 
 
 SUMMARY_CAPTION = (
     "🌦️ สรุปอากาศบ้าน (บึงกุ่ม)\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
-    "PM2.5 บ้าน: {{ states('sensor.pm25_home') }} µg/m³ ({{ states('sensor.pm25_level') }})\n"
-    "PM2.5 สถานี PCD: {{ states('sensor.pm25_pcd') }} µg/m³\n"
-    "ฝน 24 ชม. (สถานีบ้าน): {{ states('sensor.rain24_home') }} mm\n"
+    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
+    + " (" + value_or("sensor.pm25_level", empty="-") + ")\n"
+    "PM2.5 สถานี PCD: " + value_or("sensor.pm25_pcd", " µg/m³") + "\n"
+    "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm") + "\n"
     "เรดาร์ 30 กม.: {{ 'ฝนตกที่บ้าน' if is_state('binary_sensor.radar_rain_now','on') "
     "else ('ฝนกำลังจะมา' if is_state('binary_sensor.radar_rain_approaching','on') else 'ยังไม่มีฝน') }}"
-    " ({{ states('sensor.radar_rain_near') }}%)"
+    + " (" + value_or("sensor.radar_rain_near", "%", empty="-") + ")"
     + has_rain_level() + "\n"
-    "ฝน 1 ชม.ข้างหน้า: {{ states('sensor.rain_next_60min_mm') }} mm"
-    "{% if is_state('binary_sensor.radar_rain_approaching','on') and states('sensor.rain_soon_in_min')|int(0) > 0 %}"
+    "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm")
+    + "{% if is_state('binary_sensor.radar_rain_approaching','on') and states('sensor.rain_soon_in_min')|int(0) > 0 %}"
     " · ในอีก {{ states('sensor.rain_soon_in_min') }} นาที{% endif %}\n"
     "{% if is_state('binary_sensor.flash_flood_watch','on') %}⚠️ พื้นที่เฝ้าระวังน้ำท่วมฉับพลัน (HII 24 ชม.)\n{% endif %}"
     + tmd_pct("พยากรณ์ กรมฝนหลวง 24 ชม.: ฝน", "sensor.tmd_rain_24h_pct")
     + tmd_pct("พยากรณ์ กรมฝนหลวง 7 วัน: ฝน", "sensor.tmd_rain_7d_pct")
-    + tmd_text("", "sensor.tmd_forecast_7d", "ไม่มีข้อมูล")
-    + "{% if states('sensor.tmd_warning') not in ['ไม่มีเตือน','ไม่มีข้อมูล','-1','None','unknown','unavailable',''] %}"
+    + tmd_text("", "sensor.tmd_forecast_7d")
+    + "{% if states('sensor.tmd_warning')|lower not in " + MISSING_JINJA + " %}"
     "⚠️ ประกาศเตือน กรมฝนหลวง: {{ states('sensor.tmd_warning') }}\n{% endif %}"
 )
 
@@ -83,32 +127,35 @@ APPROACH_CAPTION = (
     "{% if states('sensor.rain_soon_in_min')|int(0) > 0 %}"
     "คาดว่าฝนจะมาถึงใน ~{{ states('sensor.rain_soon_in_min')|int }} นาที"
     "{% else %}กำลังเข้าใกล้บ้าน (ยังไม่มี nowcast ที่แม่นยำ){% endif %}\n"
-    "ฝน 1 ชม.ข้างหน้า: {{ states('sensor.rain_next_60min_mm') }} mm\n"
-    "เรดาร์ 30 กม.: {{ states('sensor.radar_rain_near') }}%" + has_rain_level() + "\n"
+    "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm") + "\n"
+    "เรดาร์ 30 กม.: " + value_or("sensor.radar_rain_near", "%", empty="-")
+    + has_rain_level() + "\n"
     + tmd_pct("พยากรณ์ กรมฝนหลวง 24 ชม.: ฝน", "sensor.tmd_rain_24h_pct").rstrip("\n")
     + " ของพื้นที่\n"
-    "PM2.5 บ้าน: {{ states('sensor.pm25_home') }} µg/m³"
+    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
 )
 
 RAIN_NOW_CAPTION = (
     "☔ ฝนตกที่บ้านตอนนี้\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
-    "ฝน 1 ชม.ข้างหน้า: {{ states('sensor.rain_next_60min_mm') }} mm\n"
-    "เรดาร์ 30 กม.: {{ states('sensor.radar_rain_near') }}%" + has_rain_level() + "\n"
-    "ฝน 24 ชม. (สถานีบ้าน): {{ states('sensor.rain24_home') }} mm"
+    "ฝน 1 ชม.ข้างหน้า: " + value_or("sensor.rain_next_60min_mm", " mm") + "\n"
+    "เรดาร์ 30 กม.: " + value_or("sensor.radar_rain_near", "%", empty="-")
+    + has_rain_level() + "\n"
+    "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm")
 )
 
 PM25_CAPTION = (
     "⚠️ PM2.5 บ้านสูง\n{{ now().strftime('%d/%m/%Y %H:%M') }}\n\n"
-    "PM2.5 บ้าน: {{ states('sensor.pm25_home') }} µg/m³ ({{ states('sensor.pm25_level') }})\n"
+    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
+    + " (" + value_or("sensor.pm25_level", empty="-") + ")\n"
     "เกณฑ์: {{ states('input_number.pm25_alert_threshold')|int }} µg/m³\n"
-    "PM2.5 สถานี PCD: {{ states('sensor.pm25_pcd') }} µg/m³"
+    "PM2.5 สถานี PCD: " + value_or("sensor.pm25_pcd", " µg/m³")
 )
 
 RAIN24_CAPTION = (
     "🌧️ ฝน 24 ชม. สูง\n{{ now().strftime('%d/%m/%Y %H:%M') }}\n\n"
-    "ฝน 24 ชม. (สถานีบ้าน): {{ states('sensor.rain24_home') }} mm\n"
+    "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm") + "\n"
     "เกณฑ์: {{ states('input_number.rain_alert_threshold')|int }} mm"
 )
 
@@ -169,11 +216,12 @@ AUTOMATIONS = [
 ]
 
 if __name__ == "__main__":
+    token = require_token()
     for a in AUTOMATIONS:
         aid = a["id"]
         req = urllib.request.Request(f"{BASE}/api/config/automation/config/{aid}",
             data=json.dumps(a, ensure_ascii=False).encode("utf-8"),
-            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}, method="POST")
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=20) as r:
                 print(f"{aid}: {r.status} {r.read().decode(errors='replace')[:80]}")

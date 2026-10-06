@@ -44,6 +44,7 @@ LIVE = {
     "sensor.pm25_trend": "0",
     "sensor.rain_now_mm": "0",
     "input_number.pm25_alert_threshold": "50",
+    "input_number.rain_alert_threshold": "10",
 }
 
 # Everything the sensor layer can hand a caption when a source is broken.
@@ -195,16 +196,81 @@ class TestSentinelsNeverReachTheMessage(unittest.TestCase):
     def test_text_helper_hides_every_sentinel(self):
         for value in SENTINELS:
             with self.subTest(state=value):
-                out = render(ma.tmd_text("", "sensor.tmd_forecast_7d",
-                                        "ไม่มีข้อมูล"),
+                out = render(ma.tmd_text("", "sensor.tmd_forecast_7d"),
                              {"sensor.tmd_forecast_7d": value})
                 self.assertEqual(out.strip(), "",
                                  "sentinel %r was printed" % value)
 
     def test_text_helper_shows_a_real_reading(self):
-        out = render(ma.tmd_text("", "sensor.tmd_forecast_7d", "ไม่มีข้อมูล"),
+        out = render(ma.tmd_text("", "sensor.tmd_forecast_7d"),
                      {"sensor.tmd_forecast_7d": "ฝนกระจาย"})
         self.assertIn("ฝนกระจาย", out)
+
+
+class TestNonTmdSensorsAreFiltered(unittest.TestCase):
+    """The sentinel work started with TMD, but PM2.5, ThaiWater and Open-Meteo
+    fail the same way: the sensor holds 'unknown' or the literal string "None"
+    and the caption used to interpolate it raw. This is the gap the README
+    wrongly claimed test_captions.py already covered."""
+
+    # the non-TMD sensors every caption reads, and where they surface
+    WATCHED = ["sensor.pm25_home", "sensor.pm25_pcd", "sensor.rain24_home",
+               "sensor.rain_next_60min_mm"]
+
+    def test_no_sentinel_reaches_the_summary_caption(self):
+        for entity in self.WATCHED:
+            for value in SENTINELS:
+                with self.subTest(entity=entity, state=value):
+                    states = dict(LIVE)
+                    states[entity] = value
+                    out = render(ma.SUMMARY_CAPTION, states)
+                    for bad in ("-1", LITERAL_NONE, "unknown", "unavailable"):
+                        self.assertNotIn(
+                            bad, out,
+                            "%s=%r leaked %r into: %r"
+                            % (entity, value, bad, out))
+
+    def test_a_real_reading_still_shows(self):
+        states = dict(LIVE)
+        states["sensor.pm25_pcd"] = "38"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertIn("38 µg/m³", out)
+
+    def test_the_mm_sentinel_reads_as_missing_not_as_minus_one(self):
+        states = dict(LIVE)
+        states["sensor.rain_next_60min_mm"] = "-1"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertNotIn("-1 mm", out)
+        self.assertIn("ไม่มีข้อมูล", out)
+
+    def test_zero_mm_is_a_real_reading(self):
+        states = dict(LIVE)
+        states["sensor.rain_next_60min_mm"] = "0"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertIn("0 mm", out)
+
+    def test_the_alert_captions_are_filtered_too(self):
+        for tpl in (ma.PM25_CAPTION, ma.RAIN24_CAPTION, ma.RAIN_NOW_CAPTION,
+                    ma.APPROACH_CAPTION):
+            for entity in self.WATCHED:
+                with self.subTest(entity=entity, caption=tpl[:24]):
+                    states = dict(LIVE)
+                    states[entity] = LITERAL_NONE
+                    out = render(tpl, states)
+                    for bad in (LITERAL_NONE, "unknown", "unavailable"):
+                        self.assertNotIn(bad, out)
+
+    def test_every_caption_filter_list_is_the_one_shared_list(self):
+        """The sentinel set used to be copied in four places and had already
+        drifted apart, so one caption could filter a value another passed."""
+        self.assertIn("unknown", ma.MISSING)
+        self.assertIn("unavailable", ma.MISSING)
+        self.assertIn("none", [m.lower() for m in ma.MISSING])
+        # no hand-maintained copy of the list may survive in a caption literal
+        for attr in ("SUMMARY_CAPTION", "APPROACH_CAPTION", "RAIN_NOW_CAPTION",
+                     "PM25_CAPTION", "RAIN24_CAPTION"):
+            with self.subTest(caption=attr):
+                self.assertNotIn("'None', 'unknown'", getattr(ma, attr))
 
     def test_zero_minutes_is_not_shown_as_a_wait_time(self):
         """rain_soon_in_min uses -1 for 'unknown'; 0 must not render as
