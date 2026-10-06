@@ -282,5 +282,150 @@ class TestNonTmdSensorsAreFiltered(unittest.TestCase):
         self.assertNotIn("ในอีก -1", out)
 
 
+class TestPm25Provenance(unittest.TestCase):
+    """sensor.pm25_home is Open-Meteo CAMS - a model at roughly 11 km
+    resolution, not a measurement - while sensor.pm25_pcd is a real station
+    about 3.8 km away. The caption presented the model as plain "home", which
+    overstates it and hides when the station is the better reading."""
+
+    def test_the_model_is_labelled_as_a_model(self):
+        out = render(ma.SUMMARY_CAPTION, dict(LIVE))
+        self.assertIn("PM2.5 บ้าน (แบบจำลอง)", out)
+        self.assertIn("PM2.5 สถานี PCD (วัดจริง)", out)
+
+    def test_the_label_is_not_duplicated(self):
+        """pm25_home_line() carries its own label, so a caller must not add a
+        second one - that produced 'PM2.5 บ้าน: PM2.5 บ้าน (แบบจำลอง): 17.6'."""
+        out = render(ma.SUMMARY_CAPTION, dict(LIVE))
+        self.assertEqual(out.count("PM2.5 บ้าน"), 1,
+                         "the PM2.5 label is repeated:\n%s" % out)
+        self.assertEqual(out.count("PM2.5 สถานี PCD"), 1)
+
+    def test_the_station_stands_in_when_the_model_is_down(self):
+        states = dict(LIVE)
+        states["sensor.pm25_home"] = "unavailable"
+        states["sensor.pm25_pcd"] = "88"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertIn("สถานี PCD แทน", out)
+        self.assertIn("88", out)
+        self.assertNotIn("unavailable", out)
+
+    def test_both_sources_down_says_missing_not_zero(self):
+        states = dict(LIVE)
+        states["sensor.pm25_home"] = "unavailable"
+        states["sensor.pm25_pcd"] = "unknown"
+        out = render(ma.SUMMARY_CAPTION, states)
+        self.assertIn("PM2.5 บ้าน: ไม่มีข้อมูล", out)
+        self.assertNotIn("0 µg/m³", out)
+
+    def test_the_alert_caption_is_labelled_too(self):
+        out = render(ma.PM25_CAPTION, dict(LIVE))
+        self.assertIn("(แบบจำลอง)", out)
+        self.assertIn("(วัดจริง)", out)
+
+    def test_the_alert_prefers_the_model_then_the_station(self):
+        cond = [a for a in ma.AUTOMATIONS if a["id"] == "weather_pm25_alert"][0]
+        tpl = cond["condition"][1]["value_template"]
+        thr = {"input_number.pm25_alert_threshold": "50"}
+
+        cases = [
+            ({"sensor.pm25_home": "80", "sensor.pm25_pcd": "10"}, "true",
+             "model above threshold"),
+            ({"sensor.pm25_home": "unavailable", "sensor.pm25_pcd": "80"}, "true",
+             "model down, station above threshold"),
+            ({"sensor.pm25_home": "10", "sensor.pm25_pcd": "10"}, "false",
+             "both below threshold"),
+            ({"sensor.pm25_home": "unavailable", "sensor.pm25_pcd": "unknown"},
+             "false", "no reading at all"),
+        ]
+        for states, want, why in cases:
+            with self.subTest(case=why):
+                got = render(tpl, {**states, **thr}).strip().lower()
+                self.assertEqual(got, want, "%s -> %r" % (why, got))
+
+    def test_the_alert_triggers_on_the_station_too(self):
+        """The model can go unavailable on its own; the alert must not depend
+        on it staying up."""
+        cond = [a for a in ma.AUTOMATIONS if a["id"] == "weather_pm25_alert"][0]
+        ents = set()
+        for t in cond["trigger"]:
+            e = t.get("entity_id")
+            if isinstance(e, list):
+                ents.update(e)
+            elif e:
+                ents.add(e)
+        self.assertIn("sensor.pm25_pcd", ents)
+
+
+try:
+    import yaml
+except ImportError:                     # pragma: no cover
+    yaml = None
+
+
+@unittest.skipIf(yaml is None, "pyyaml not installed")
+class TestYamlPm25Templates(unittest.TestCase):
+    """The level and source sensors live in weather_radar.yaml as Jinja, which
+    nothing else in this file can see. A typo there is a broken entity, so they
+    are rendered here too."""
+
+    YAML = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "weather_radar.yaml")
+
+    def _sensors(self):
+        with open(self.YAML, encoding="utf-8") as fh:
+            d = yaml.safe_load(fh.read())
+        return {s["unique_id"]: s["state"] for s in d["template"][0]["sensor"]}
+
+    def _render(self, tpl, states):
+        return render(tpl, states).strip()
+
+    def test_both_templates_parse_and_render(self):
+        for uid, tpl in self._sensors().items():
+            with self.subTest(sensor=uid):
+                self.assertTrue(self._render(tpl, dict(LIVE)))
+
+    def test_the_level_falls_back_to_the_station(self):
+        s = self._sensors()
+        self.assertEqual(
+            self._render(s["pm25_home_level"],
+                         {"sensor.pm25_home": "17.6", "sensor.pm25_pcd": "16"}),
+            "ดี")
+        # the model is down: the station must be used, not blanked
+        self.assertEqual(
+            self._render(s["pm25_home_level"],
+                         {"sensor.pm25_home": "unavailable",
+                          "sensor.pm25_pcd": "88"}),
+            "มีผลต่อสุขภาพ")
+        self.assertEqual(
+            self._render(s["pm25_home_level"],
+                         {"sensor.pm25_home": "unavailable",
+                          "sensor.pm25_pcd": "unknown"}),
+            "ไม่มีข้อมูล")
+
+    def test_a_negative_reading_is_not_a_level(self):
+        """A negative concentration used to parse as a number and would have
+        reported a level for it."""
+        s = self._sensors()
+        for uid in ("pm25_home_level", "pm25_home_source"):
+            with self.subTest(sensor=uid):
+                self.assertEqual(
+                    self._render(s[uid], {"sensor.pm25_home": "-1",
+                                          "sensor.pm25_pcd": "-1"}),
+                    "ไม่มีข้อมูล")
+
+    def test_the_source_names_the_model_or_the_station(self):
+        s = self._sensors()
+        self.assertEqual(
+            self._render(s["pm25_home_source"],
+                         {"sensor.pm25_home": "17.6", "sensor.pm25_pcd": "16"}),
+            "แบบจำลอง CAMS")
+        self.assertIn(
+            "สถานี PCD",
+            self._render(s["pm25_home_source"],
+                         {"sensor.pm25_home": "unavailable",
+                          "sensor.pm25_pcd": "88"}))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

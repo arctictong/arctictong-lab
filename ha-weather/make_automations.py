@@ -51,6 +51,42 @@ def value_or(entity, unit="", empty="ไม่มีข้อมูล"):
             % (entity, MISSING_JINJA, entity, unit, empty))
 
 
+def pm25_home_line():
+    """Home PM2.5 with its provenance stated.
+
+    sensor.pm25_home is Open-Meteo CAMS - a model at roughly 11 km resolution,
+    not a measurement - while sensor.pm25_pcd is a real station about 3.8 km
+    away. Presenting the model as plain "home" overstates it, so the source is
+    named; the station stands in when the model is unavailable, rather than the
+    line going blank while a usable reading exists.
+
+    Availability is tested with float(none), which returns None when the state
+    will not parse, plus a >= 0 guard: a negative concentration is not a
+    reading. No dependency on is_number being spelled the right way, and the
+    raw state is still what gets displayed.
+    """
+    return ("{% set m = states('sensor.pm25_home') %}"
+            "{% set p = states('sensor.pm25_pcd') %}"
+            "{% set mv = m|float(none) %}"
+            "{% set pv = p|float(none) %}"
+            "{% if mv is not none and mv >= 0 %}"
+            "PM2.5 บ้าน (แบบจำลอง): {{ m }} µg/m³"
+            "{% elif pv is not none and pv >= 0 %}"
+            "PM2.5 บ้าน (สถานี PCD แทน): {{ p }} µg/m³"
+            "{% else %}PM2.5 บ้าน: ไม่มีข้อมูล{% endif %}")
+
+
+def pm25_alert_condition():
+    """Jinja for the PM2.5 alert: the model value when available, else the
+    station, compared against the threshold. An Open-Meteo outage must not
+    silence an alert while a real ground reading is above the line."""
+    return ("{% set m = states('sensor.pm25_home')|float(none) %}"
+            "{% set p = states('sensor.pm25_pcd')|float(none) %}"
+            "{{ (m if (m is not none and m >= 0) else "
+            "(p if (p is not none and p >= 0) else 0)) "
+            "> states('input_number.pm25_alert_threshold')|float(0) }}")
+
+
 def send_photo(caption):
     return [
         {"service": "shell_command.weather_radar_build"},
@@ -101,9 +137,10 @@ SUMMARY_CAPTION = (
     "🌦️ สรุปอากาศบ้าน (บึงกุ่ม)\n"
     "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
     "\n"
-    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
+    # pm25_home_line() carries its own "PM2.5 บ้าน (...)" label
+    + pm25_home_line()
     + " (" + value_or("sensor.pm25_level", empty="-") + ")\n"
-    "PM2.5 สถานี PCD: " + value_or("sensor.pm25_pcd", " µg/m³") + "\n"
+    "PM2.5 สถานี PCD (วัดจริง): " + value_or("sensor.pm25_pcd", " µg/m³") + "\n"
     "ฝน 24 ชม. (สถานีบ้าน): " + value_or("sensor.rain24_home", " mm") + "\n"
     "เรดาร์ 30 กม.: {{ 'ฝนตกที่บ้าน' if is_state('binary_sensor.radar_rain_now','on') "
     "else ('ฝนกำลังจะมา' if is_state('binary_sensor.radar_rain_approaching','on') else 'ยังไม่มีฝน') }}"
@@ -132,7 +169,7 @@ APPROACH_CAPTION = (
     + has_rain_level() + "\n"
     + tmd_pct("พยากรณ์ กรมฝนหลวง 24 ชม.: ฝน", "sensor.tmd_rain_24h_pct").rstrip("\n")
     + " ของพื้นที่\n"
-    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
+    + pm25_home_line()
 )
 
 RAIN_NOW_CAPTION = (
@@ -147,10 +184,10 @@ RAIN_NOW_CAPTION = (
 
 PM25_CAPTION = (
     "⚠️ PM2.5 บ้านสูง\n{{ now().strftime('%d/%m/%Y %H:%M') }}\n\n"
-    "PM2.5 บ้าน: " + value_or("sensor.pm25_home", " µg/m³")
+    + pm25_home_line()
     + " (" + value_or("sensor.pm25_level", empty="-") + ")\n"
     "เกณฑ์: {{ states('input_number.pm25_alert_threshold')|int }} µg/m³\n"
-    "PM2.5 สถานี PCD: " + value_or("sensor.pm25_pcd", " µg/m³")
+    "PM2.5 สถานี PCD (วัดจริง): " + value_or("sensor.pm25_pcd", " µg/m³")
 )
 
 RAIN24_CAPTION = (
@@ -182,11 +219,14 @@ AUTOMATIONS = [
 
     {"id": "weather_pm25_alert",
      "alias": "แจ้งเตือน PM2.5 บ้าน สูง",
-     "trigger": [{"platform": "state", "entity_id": "sensor.pm25_home"}],
+     # the model can go unavailable on its own, so the station also triggers:
+     # an alert must not depend on one of the two sources staying up
+     "trigger": [{"platform": "state", "entity_id": "sensor.pm25_home"},
+                 {"platform": "state", "entity_id": "sensor.pm25_pcd"}],
      "condition": [
          ENABLED,
          {"condition": "template",
-          "value_template": "{{ states('sensor.pm25_home')|float(0) > states('input_number.pm25_alert_threshold')|float(0) }}"},
+          "value_template": pm25_alert_condition()},
          cooldown("weather_pm25_alert")],
      "action": send_photo(PM25_CAPTION), "mode": "single", "max_exceeded": "silent"},
 

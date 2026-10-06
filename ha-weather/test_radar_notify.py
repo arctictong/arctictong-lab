@@ -224,7 +224,7 @@ class TestHistogram(unittest.TestCase):
 
     def _band(self, im, mpp=None):
         return rn.class_histogram(im, mpp or self.MPP,
-                                  [(0.0, 30.0, "c")], 30.0)["c"]
+                                  [(0.0, 30.0, "c")])["c"]
 
     def test_disc_filling_the_band_reads_full_coverage(self):
         st = self._band(self._disc(self.RADIUS_PX, (0, 71, 104), self.GRID))
@@ -266,8 +266,7 @@ class TestHistogram(unittest.TestCase):
         inner_px = int(15.0 * 1000.0 / self.MPP)
         im = self._disc(inner_px, (0, 71, 104), self.GRID)
         st = rn.class_histogram(im, self.MPP,
-                                [(0.0, 30.0, "outer"), (0.0, 15.0, "inner")],
-                                30.0)
+                                [(0.0, 30.0, "outer"), (0.0, 15.0, "inner")])
         self.assertGreater(st["inner"]["pct"], 95.0)
         self.assertLess(st["outer"]["pct"], 60.0)
 
@@ -283,10 +282,49 @@ class TestHistogram(unittest.TestCase):
                 if int(15.0 * 1000.0 / self.MPP) <= d <= self.RADIUS_PX:
                     px[x, y] = (0, 71, 104, 255)
         st = rn.class_histogram(im, self.MPP,
-                                [(0.0, 30.0, "outer"), (15.0, 30.0, "shell")],
-                                30.0)
+                                [(0.0, 30.0, "outer"), (15.0, 30.0, "shell")])
         self.assertGreater(st["shell"]["pct"], 50.0)
         self.assertLess(st["outer"]["pct"], st["shell"]["pct"] + 1.0)
+
+
+    def test_a_thin_echo_is_not_lost_to_undersampling(self):
+        """The reason the analysis runs at native resolution.
+
+        At 300 samples across a 950 px image, NEAREST reads only every third
+        source column, so a 1 px echo on an unread column inside the band is
+        never measured - the coverage comes back 0, not merely low. Native
+        resolution must catch it.
+        """
+        size, grid, mpp = 950, 300, 500.0
+        band_px = int(30.0 * 1000.0 / mpp)                  # 60 px radius
+        centre = size // 2
+        # columns the coarse grid can read, both rounding conventions
+        sampled = {int(x * size / grid) for x in range(grid)}
+        sampled |= {int(round(x * size / grid)) for x in range(grid)}
+        col = next(c for c in range(centre - band_px + 1, centre + band_px)
+                   if c not in sampled)
+
+        im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        px = im.load()
+        for y in range(size):
+            px[col, y] = (0, 127, 180, 255)
+
+        coarse = rn.class_histogram(im, mpp, [(0.0, 30.0, "c")],
+                                    grid=grid)["c"]["pct"]
+        native = rn.class_histogram(im, mpp, [(0.0, 30.0, "c")])["c"]["pct"]
+
+        self.assertEqual(coarse, 0.0,
+                         "the coarse grid sampled column %d after all" % col)
+        self.assertGreater(native, 0.0,
+                           "the 1 px echo at column %d was lost at native "
+                           "resolution too" % col)
+
+    def test_the_default_grid_is_capped_by_the_analysis_ceiling(self):
+        st = rn.class_histogram(Image.new("RGBA", (40, 40), (0, 0, 0, 0)),
+                                500.0, [(0.0, 30.0, "c")])
+        self.assertEqual(st["c"]["pct"], 0.0)
+        self.assertEqual(rn.choose_grid(None, 5000), rn.ANALYSIS_MAX)
+        self.assertEqual(rn.choose_grid(None, 800), 800)
 
 
 class TestMosaic(unittest.TestCase):
@@ -587,24 +625,40 @@ class TestHomeClass(unittest.TestCase):
 class TestChooseGrid(unittest.TestCase):
     """class_histogram's grid argument was overwritten unconditionally, so the
     trend loop's grid=256 was silently ignored and the 300/540 default used
-    instead. The density is what the caller asked for, or it is a bug."""
+    instead. Now an explicit grid wins outright, and the default is native
+    resolution rather than an undersample that can miss thin echoes."""
 
     def test_an_explicit_grid_wins(self):
-        self.assertEqual(rn.choose_grid(202.0, 256, 4096), 256,
+        self.assertEqual(rn.choose_grid(256, 4096), 256,
                          "the caller's grid was ignored again")
 
-    def test_default_density_targets_100_samples_across(self):
-        self.assertEqual(rn.choose_grid(202.0, None, 4096), 300)
-        self.assertEqual(rn.choose_grid(50.0, None, 4096), 540)
+    def test_an_explicit_grid_is_capped_by_the_image(self):
+        self.assertEqual(rn.choose_grid(4096, 950), 950)
 
-    def test_never_exceeds_the_image_width(self):
-        self.assertEqual(rn.choose_grid(202.0, 4096, 950), 950)
-        self.assertEqual(rn.choose_grid(202.0, None, 200), 200)
+    def test_the_default_is_native_resolution(self):
+        """A 950 px mosaic must be analysed at 950, not 300: undersampling can
+        miss a 1 px echo entirely rather than merely under-counting it."""
+        self.assertEqual(rn.choose_grid(None, 950), 950)
+
+    def test_the_default_is_capped_for_cost(self):
+        self.assertEqual(rn.choose_grid(None, 5000), rn.ANALYSIS_MAX)
+
+    def test_a_small_image_is_analysed_at_its_own_size(self):
+        self.assertEqual(rn.choose_grid(None, 200), 200)
 
     def test_the_deployed_trend_call_asks_for_256(self):
         src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "radar_notify.py"), encoding="utf-8").read()
         self.assertIn("grid=256", src)
+
+    def test_the_coverage_call_does_not_cap_the_grid(self):
+        """The 30 km / 15 km numbers must not be measured on a coarse grid."""
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "radar_notify.py"), encoding="utf-8").read()
+        self.assertNotIn("(0.0, RADIUS_KM, \"cover30\"),\n"
+                         "                              (0.0, INNER_KM, "
+                         "\"inner15\")],\n"
+                         "                             RADIUS_KM)", src)
 
 
 class TestCarryFlag(unittest.TestCase):
@@ -864,6 +918,34 @@ class TestWriteAtomic(unittest.TestCase):
                                 "radar_notify.py"), encoding="utf-8").read()
         self.assertIn("write_atomic(OUT", src,
                       "latest.png is written non-atomically again")
+
+
+class TestDeadNowcastPathRemoved(unittest.TestCase):
+    """RainViewer's nowcast frames are discontinued - the index reports zero -
+    so the branch that read nowcast[-1] was dead code implying a capability the
+    system no longer has. Open-Meteo is the only ETA source."""
+
+    HERE = os.path.dirname(os.path.abspath(__file__))
+
+    def _src(self):
+        with open(os.path.join(self.HERE, "radar_notify.py"),
+                  encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_dead_nowcast_branch_is_gone(self):
+        src = self._src()
+        self.assertNotIn("rv_soon", src)
+        self.assertNotIn("rv_min", src)
+        self.assertNotIn("nowcast[-1]", src)
+
+    def test_the_nowcast_frame_count_is_still_reported(self):
+        """The flag stays, so a RainViewer restoration is visible rather than
+        silently ignored."""
+        self.assertIn("rainviewer_nowcast", self._src())
+
+    def test_rain_soon_comes_from_open_meteo_alone(self):
+        src = self._src()
+        self.assertIn("rain_soon = om_soon", src)
 
 
 class TestRunBudget(unittest.TestCase):

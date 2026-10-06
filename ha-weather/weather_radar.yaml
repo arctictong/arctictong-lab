@@ -188,17 +188,38 @@ rest:
 
 template:
   - sensor:
+      # sensor.pm25_home is Open-Meteo CAMS - a model at ~11 km resolution, not
+      # a measurement - so it can go unavailable on its own. When it does, the
+      # nearest ground station (PCD, ~3.8 km) stands in rather than the level
+      # going blank or, worse, reading 0 and reporting "ดีมาก".
+      # float(none) returns None for a state that will not parse, which avoids
+      # depending on how the is_number test happens to be spelled.
       - name: "PM25 level"
         unique_id: pm25_home_level
         icon: mdi:blur
         state: >-
-          {% set v = states('sensor.pm25_home') | float(0) %}
-          {% if v <= 15 %}ดีมาก
-          {% elif v <= 25 %}ดี
-          {% elif v <= 37.5 %}ปานกลาง
-          {% elif v <= 75 %}เริ่มมีผลต่อสุขภาพ
-          {% elif v <= 150 %}มีผลต่อสุขภาพ
+          {% set n = namespace(v=none) %}
+          {% set m = states('sensor.pm25_home')|float(none) %}
+          {% set p = states('sensor.pm25_pcd')|float(none) %}
+          {% if m is not none and m >= 0 %}{% set n.v = m %}
+          {% elif p is not none and p >= 0 %}{% set n.v = p %}
+          {% endif %}
+          {% if n.v is none %}ไม่มีข้อมูล
+          {% elif n.v <= 15 %}ดีมาก
+          {% elif n.v <= 25 %}ดี
+          {% elif n.v <= 37.5 %}ปานกลาง
+          {% elif n.v <= 75 %}เริ่มมีผลต่อสุขภาพ
+          {% elif n.v <= 150 %}มีผลต่อสุขภาพ
           {% else %}อันตราย{% endif %}
+      - name: "PM25 source"
+        unique_id: pm25_home_source
+        icon: mdi:database-eye-outline
+        state: >-
+          {% set m = states('sensor.pm25_home')|float(none) %}
+          {% set p = states('sensor.pm25_pcd')|float(none) %}
+          {% if m is not none and m >= 0 %}แบบจำลอง CAMS
+          {% elif p is not none and p >= 0 %}สถานี PCD (~3.8 กม.)
+          {% else %}ไม่มีข้อมูล{% endif %}
 
 input_number:
   pm25_alert_threshold:

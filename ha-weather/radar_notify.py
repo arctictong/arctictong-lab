@@ -136,6 +136,11 @@ _MEMO = {}
 # OPEN_BUDGET leaves room for the render and the write.
 OPEN_BUDGET = float(os.environ.get("RADAR_BUDGET_S", "50"))
 
+# Sampling ceiling for class_histogram when no explicit grid is given. The
+# mosaic is SIZE x SIZE, so this normally means "analyse at native resolution".
+# Above 1200 it stops being worth the time; a 1200 px pass is ~1.5 s.
+ANALYSIS_MAX = int(os.environ.get("RADAR_ANALYSIS_PX", "1200"))
+
 _DEADLINE = None
 
 
@@ -284,27 +289,29 @@ def classify(r, g, b):
     return _RAMP_CLASS[_RAMP[best]]
 
 
-def choose_grid(ref_px, requested, width):
+def choose_grid(requested, width, ceiling=None):
     """Sampling density for class_histogram.
 
-    An explicit `requested` wins - the trend loop caps it for speed - otherwise
-    aim for ~100+ samples across the reference circle, capped at the image
-    width. `requested` used to be overwritten unconditionally, so a caller that
-    passed a grid silently got the 300/540 default instead.
+    An explicit `requested` wins - the trend loop caps it for speed. Otherwise
+    analyse at the image's own resolution, capped by `ceiling` for cost.
+
+    Undersampling is not a harmless approximation here: at 300 samples across a
+    950 px mosaic, two source columns in three are never read, so a 1 px echo
+    landing on an unread column is not measured at all - not even as zero.
     """
-    grid = requested or (300 if ref_px >= 100 else 540)
-    return min(grid, width)
+    if requested:
+        return min(requested, width)
+    return min(width, ceiling or ANALYSIS_MAX)
 
 
-def class_histogram(img, mpp, bands, ref_km, grid=None):
+def class_histogram(img, mpp, bands, grid=None):
     """Bucket echoes into intensity classes per radius band.
 
-    bands = [(r_inner_km, r_outer_km, key), ...]; ref_km sets the sampling
-    density so the reference circle keeps at least ~100 samples across.
+    bands = [(r_inner_km, r_outer_km, key), ...]. The analysis runs at the
+    image's own resolution unless `grid` caps it.
     """
     w = img.size[0]
-    ref_px = (ref_km * 1000.0) / mpp
-    grid = choose_grid(ref_px, grid, img.size[0])
+    grid = choose_grid(grid, img.size[0])
     small = img.convert("RGB").resize((grid, grid), Image.NEAREST)
     sx = float(grid) / w
     buf = small.tobytes()
@@ -665,8 +672,6 @@ def build():
     cls30 = 0
     trend = None
     rain_now = False
-    rv_soon = False
-    rv_min = None
     if past and zoom:
         tmpl = make_url(tile_px, "{z}", "{x}", "{y}")
         rcx, rcy = latlon_to_world_px(HOME_LAT, HOME_LON, zoom, tile_px)
@@ -676,8 +681,7 @@ def build():
         canvas = Image.alpha_composite(canvas, radar)
         st = class_histogram(radar, mpp,
                              [(0.0, RADIUS_KM, "cover30"),
-                              (0.0, INNER_KM, "inner15")],
-                             RADIUS_KM)
+                              (0.0, INNER_KM, "inner15")])
         cover30, cls30 = st["cover30"]["pct"], st["cover30"]["class"]
         inner15 = st["inner15"]["pct"]
         rain_now = home_class(tmpl, zoom, rcx, rcy, mpp, tile_px) >= 0
@@ -698,7 +702,7 @@ def build():
             try:
                 im, _ = mosaic(t2, zoom, tcx, tcy, tsize, ts_px)
                 v = class_histogram(im, tmpp, [(0.0, INNER_KM, "i")],
-                                    INNER_KM, grid=256)["i"]["pct"]
+                                    grid=256)["i"]["pct"]
                 if f is past[-1]:
                     inner_now = v
                 else:
@@ -709,21 +713,14 @@ def build():
             trend = round(inner_now - min(olds), 2)
             log("trend inner15: past=%s now=%.2f delta=%s" % (olds, inner_now, trend))
 
-    if nowcast and past and zoom:
-        f = nowcast[-1]
-        tmpl = ("%s%s/%d_%d/{z}/{x}/{y}/%s/%s.png"
-                % (host, f["path"], tile_px, tile_px, PALETTE, SCHEME))
-        rcx, rcy = latlon_to_world_px(HOME_LAT, HOME_LON, zoom, tile_px)
-        rv_soon = home_class(tmpl, zoom, rcx, rcy, mpp, tile_px) >= 0
-        if f.get("time") and past[-1].get("time"):
-            rv_min = int(round((f["time"] - past[-1]["time"]) / 60.0))
-
     om_soon, om_min, om_mm60, om_ok = openmeteo_nowcast()
-    rain_soon = rv_soon or om_soon
-    soon_min = None
-    for m in (om_min, rv_min):
-        if m is not None and (soon_min is None or m < soon_min):
-            soon_min = m
+    # RainViewer's nowcast frames are discontinued (the index reports zero), so
+    # the radar contributes no ETA and openmeteo_nowcast() is the only source.
+    # The dead branch that read the newest nowcast frame is gone;
+    # `rainviewer_nowcast` in the summary still reports the frame count, so a
+    # restoration stays visible.
+    rain_soon = om_soon
+    soon_min = om_min
     # -1 instead of null: HA's command_line platform turns a rendered "None"
     # into `unavailable`, so the sentinel keeps the sensor numeric.
     if soon_min is None:
