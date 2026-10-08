@@ -266,13 +266,44 @@ less than the estimator resolves.
 | รีเฟรชเรดาร์เป็นระยะ | every 15 min (rebuilds image + JSON) |
 | สรุปอากาศเช้า | 06:00 |
 | สรุปอากาศเย็น | 17:00 |
-| แจ้งเตือน PM2.5 บ้าน สูง | `sensor.pm25_home` over threshold, 2 h cooldown |
-| แจ้งเตือนฝน 24 ชม. สูง | `sensor.rain24_home` over threshold, 2 h cooldown |
-| แจ้งเตือน ฝนกำลังจะมาถึงบ้าน | `binary_sensor.radar_rain_approaching` off→on, 1 h cooldown |
-| แจ้งเตือน ฝนตกที่บ้าน | `binary_sensor.radar_rain_now` off→on, 1 h cooldown |
+| แจ้งเตือน PM2.5 บ้าน สูง | `sensor.pm25_home` **crosses** `input_number.pm25_alert_threshold`, held 15 min. Sends text, not the map. A second trigger clears it below 30 |
+| แจ้งเตือนฝน 24 ชม. สูง | `sensor.rain24_home` **crosses** `input_number.rain_alert_threshold`, held 15 min |
+| แจ้งเตือน ฝนกำลังจะมาถึงบ้าน | `binary_sensor.radar_rain_approaching` off→on, held 5 min |
+| แจ้งเตือน ฝนตกที่บ้าน | `binary_sensor.radar_rain_now` off→on, held 5 min |
 | คะแนนโมเดลพยากรณ์ (รายสัปดาห์) | Monday 09:00 — runs `score_forecast` and posts its output verbatim |
 
 All gated by `input_boolean.weather_alerts_enabled`.
+
+### Rate limiting is `for:`, not a cooldown
+
+Every alert trigger carries a `for:` — how long the condition must hold before
+it counts. This replaced a `last_triggered` cooldown that **never worked**:
+
+```jinja
+{{ state_attr('automation.weather_pm25_alert','last_triggered') ... }}
+```
+
+An automation's entity id is slugified from its **alias**, which is Thai here,
+so the entity is `automation.aecchngetuue_n_pm2_5_baan_suung` — not
+`automation.weather_pm25_alert`, which is only the config `id`. `state_attr`
+therefore returned `None`, the `is none` branch was always taken, and the
+cooldown suppressed nothing.
+
+The cost, measured over 48 h: `weather_pm25_alert` ran **37 times**, 34 of them
+between 00:00 and 07:30, because its trigger was every *state change* of two
+sensors while the value merely stayed above the line. Switching to
+`numeric_state` — which fires on the crossing only — takes that same window to
+**one** alert.
+
+Two other things came out of the same measurement: a PM2.5 alert no longer
+rebuilds the radar (it was rendering 34 needless maps in one night to talk
+about dust), and the 24 h rain alert had the same `state`-trigger problem,
+fixed the same way.
+
+`for:` is not a cooldown: it delays an alert rather than suppressing a repeat.
+That is deliberate — a re-crossing is a new event and worth saying again — and
+it needs no entity reference, so it cannot break the way the cooldown did. Note
+that HA resets the `for` timer on restart or on an automations reload.
 
 ## Environment overrides
 

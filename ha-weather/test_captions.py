@@ -10,6 +10,7 @@ message.
 Offline: nothing here touches the network or Home Assistant.
 """
 import datetime
+import json
 import os
 import sys
 import unittest
@@ -329,9 +330,21 @@ class TestPm25Provenance(unittest.TestCase):
         self.assertIn("(แบบจำลอง)", out)
         self.assertIn("(วัดจริง)", out)
 
+    def _pm25(self):
+        return next(a for a in ma.AUTOMATIONS if a["id"] == "weather_pm25_alert")
+
+    def _bad_branch(self):
+        """The effective-value check lives inside the choose branch now, not in
+        the automation's own conditions - it only applies to the alert, not to
+        the all-clear."""
+        for branch in self._pm25()["action"][0]["choose"]:
+            for c in branch["conditions"]:
+                if c.get("condition") == "template":
+                    return c["value_template"]
+        raise AssertionError("no template condition in the alert branch")
+
     def test_the_alert_prefers_the_model_then_the_station(self):
-        cond = [a for a in ma.AUTOMATIONS if a["id"] == "weather_pm25_alert"][0]
-        tpl = cond["condition"][1]["value_template"]
+        tpl = self._bad_branch()
         thr = {"input_number.pm25_alert_threshold": "50"}
 
         cases = [
@@ -352,15 +365,110 @@ class TestPm25Provenance(unittest.TestCase):
     def test_the_alert_triggers_on_the_station_too(self):
         """The model can go unavailable on its own; the alert must not depend
         on it staying up."""
-        cond = [a for a in ma.AUTOMATIONS if a["id"] == "weather_pm25_alert"][0]
         ents = set()
-        for t in cond["trigger"]:
+        for t in self._pm25()["trigger"]:
             e = t.get("entity_id")
             if isinstance(e, list):
                 ents.update(e)
             elif e:
                 ents.add(e)
         self.assertIn("sensor.pm25_pcd", ents)
+
+
+class TestAlertsFireOnCrossingsNotUpdates(unittest.TestCase):
+    """The storm of 2026-10-08: 37 PM2.5 alerts in 48 h, 34 overnight, because
+    the trigger was every state change and the cooldown that was supposed to
+    throttle it referenced an entity that does not exist.
+
+    These pin the shape of the fix, because the shape is the fix."""
+
+    def _auto(self, aid):
+        return next(a for a in ma.AUTOMATIONS if a["id"] == aid)
+
+    def test_the_pm25_trigger_is_a_threshold_crossing(self):
+        for t in self._auto("weather_pm25_alert")["trigger"]:
+            if t.get("id") == "bad":
+                self.assertEqual(t["platform"], "numeric_state",
+                                 "a state trigger fires on every update")
+
+    def test_the_pm25_threshold_is_the_input_number(self):
+        """So the user can still adjust it from the dashboard."""
+        for t in self._auto("weather_pm25_alert")["trigger"]:
+            if t.get("id") == "bad":
+                self.assertEqual(t["above"],
+                                 "input_number.pm25_alert_threshold")
+
+    def test_the_pm25_alert_waits_for_the_reading_to_hold(self):
+        for t in self._auto("weather_pm25_alert")["trigger"]:
+            if t.get("id") == "bad":
+                self.assertEqual(t["for"], {"minutes": ma.PM25_FOR_MIN})
+
+    def test_there_is_an_all_clear_trigger(self):
+        goods = [t for t in self._auto("weather_pm25_alert")["trigger"]
+                 if t.get("id") == "good"]
+        self.assertTrue(goods, "no all-clear trigger")
+        self.assertEqual(goods[0]["platform"], "numeric_state")
+        self.assertIn("below", goods[0])
+
+    def test_the_all_clear_is_below_the_alert_threshold(self):
+        """Otherwise the alert would re-arm on a wobble around the line."""
+        good = next(t for t in self._auto("weather_pm25_alert")["trigger"]
+                    if t.get("id") == "good")
+        self.assertLess(good["below"], 37)
+
+    def test_no_automation_still_uses_the_broken_cooldown(self):
+        """The cooldown referenced automation.<config id>, but the entity id is
+        slugified from the Thai alias, so it resolved to None and was always
+        true. Rate limiting is `for:` now."""
+        blob = json.dumps(ma.AUTOMATIONS, ensure_ascii=False)
+        self.assertNotIn("last_triggered", blob,
+                         "a cooldown is still referenced somewhere")
+
+    def test_every_rate_limited_trigger_carries_a_for(self):
+        for aid in ("weather_pm25_alert", "weather_rain_alert",
+                    "weather_rain_now", "weather_rain_approaching"):
+            with self.subTest(automation=aid):
+                for t in self._auto(aid)["trigger"]:
+                    self.assertIn("for", t,
+                                  "%s: trigger without a `for` can flap" % aid)
+
+    def test_the_rain24_alert_is_a_crossing_too(self):
+        t = self._auto("weather_rain_alert")["trigger"][0]
+        self.assertEqual(t["platform"], "numeric_state")
+        self.assertEqual(t["above"], "input_number.rain_alert_threshold")
+
+    def test_the_binary_rain_triggers_require_one_radar_cycle(self):
+        """The radar only updates every 5 minutes, so waiting one cycle costs
+        nothing in freshness and drops single-poll blips."""
+        for aid in ("weather_rain_now", "weather_rain_approaching"):
+            with self.subTest(automation=aid):
+                self.assertEqual(self._auto(aid)["trigger"][0]["for"],
+                                 {"minutes": 5})
+
+    def test_a_pm25_alert_does_not_rebuild_the_radar(self):
+        """It used to: send_photo() renders a radar image first, which is right
+        for rain and wrong for dust - 34 needless renders in one night."""
+        blob = json.dumps(self._auto("weather_pm25_alert")["action"],
+                          ensure_ascii=False)
+        self.assertNotIn("shell_command.weather_radar_build", blob)
+        self.assertIn("telegram_bot.send_message", blob)
+
+    def test_a_rain_alert_still_sends_the_map(self):
+        """The map is relevant to rain, so it stays there."""
+        blob = json.dumps(self._auto("weather_rain_now")["action"],
+                          ensure_ascii=False)
+        self.assertIn("shell_command.weather_radar_build", blob)
+        self.assertIn("telegram_bot.send_photo", blob)
+
+    def test_the_all_clear_message_renders_without_sentinels(self):
+        states = dict(LIVE)
+        states["sensor.pm25_home"] = "12"
+        states["sensor.pm25_pcd"] = "15"
+        out = render(ma.PM25_CLEAR_CAPTION, states)
+        self.assertIn("กลับมาปกติ", out)
+        self.assertIn("12", out)
+        for bad in ("None", "unavailable", "unknown", "-1"):
+            self.assertNotIn(bad, out)
 
 
 try:

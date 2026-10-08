@@ -39,6 +39,14 @@ def _jinja_list(items):
 
 MISSING_JINJA = _jinja_list(MISSING)
 
+# How long a reading must hold before it counts. Long enough to ignore a
+# passing spike, short enough to still be useful. This is the anti-blip delay
+# that replaced the cooldown.
+PM25_FOR_MIN = 15
+# Below this the air has genuinely cleared. Well under the alert threshold so
+# the alert does not re-arm on a wobble around the line.
+PM25_CLEAR_PCT = 30
+
 
 def value_or(entity, unit="", empty="ไม่มีข้อมูล"):
     """Jinja: the sensor's reading, or a stand-in when it has none.
@@ -96,15 +104,15 @@ def send_photo(caption):
     ]
 
 
-def cooldown(aid, secs=7200):
-    return {
-        "condition": "template",
-        "value_template": (
-            "{{ state_attr('automation.%s','last_triggered') is none "
-            "or (now() - state_attr('automation.%s','last_triggered')).total_seconds() > %d }}"
-            % (aid, aid, secs)
-        ),
-    }
+def send_text(message):
+    """A plain message, with no radar rebuild.
+
+    send_photo() rebuilds the radar first, which is right when the alert is
+    about rain and wrong when it is not: a PM2.5 alert was paying ~25 s of
+    radar rendering, and writing latest.png, to talk about dust.
+    """
+    return [{"service": "telegram_bot.send_message",
+             "data": {"chat_id": CHAT, "message": message}}]
 
 
 def has_rain_level():
@@ -233,6 +241,15 @@ RAIN24_CAPTION = (
     "เกณฑ์: {{ states('input_number.rain_alert_threshold')|int }} mm"
 )
 
+PM25_CLEAR_CAPTION = (
+    "✅ PM2.5 กลับมาปกติ\n"
+    "{{ now().strftime('%d/%m/%Y %H:%M') }}\n"
+    "\n"
+    + pm25_home_line() + "\n"
+    "PM2.5 สถานี PCD (วัดจริง): " + value_or("sensor.pm25_pcd", " µg/m³") + "\n"
+    "เกณฑ์เตือน: {{ states('input_number.pm25_alert_threshold')|int }} µg/m³"
+)
+
 def score_message():
     """The weekly scoreboard, as a preformatted Telegram message.
 
@@ -270,39 +287,67 @@ AUTOMATIONS = [
 
     {"id": "weather_pm25_alert",
      "alias": "แจ้งเตือน PM2.5 บ้าน สูง",
-     # the model can go unavailable on its own, so the station also triggers:
-     # an alert must not depend on one of the two sources staying up
-     "trigger": [{"platform": "state", "entity_id": "sensor.pm25_home"},
-                 {"platform": "state", "entity_id": "sensor.pm25_pcd"}],
-     "condition": [
-         ENABLED,
-         {"condition": "template",
-          "value_template": pm25_alert_condition()},
-         cooldown("weather_pm25_alert")],
-     "action": send_photo(PM25_CAPTION), "mode": "single", "max_exceeded": "silent"},
+     # numeric_state fires on the crossing only. The old `state` trigger fired
+     # on every update, and the cooldown that was supposed to throttle it never
+     # worked - 37 alerts in 48 h, 34 of them overnight while the value simply
+     # stayed high. `above` takes the input_number itself, so the threshold
+     # stays adjustable. `for` is the anti-blip delay, and unlike the cooldown
+     # it needs no entity reference.
+     "trigger": [
+         {"platform": "numeric_state", "entity_id": "sensor.pm25_home",
+          "above": "input_number.pm25_alert_threshold",
+          "for": {"minutes": PM25_FOR_MIN}, "id": "bad"},
+         # the model can go unavailable on its own, so the station also
+         # triggers: an alert must not depend on one of the two staying up
+         {"platform": "numeric_state", "entity_id": "sensor.pm25_pcd",
+          "above": "input_number.pm25_alert_threshold",
+          "for": {"minutes": PM25_FOR_MIN}, "id": "bad"},
+         {"platform": "numeric_state", "entity_id": "sensor.pm25_home",
+          "below": PM25_CLEAR_PCT, "for": {"minutes": PM25_FOR_MIN},
+          "id": "good"},
+     ],
+     "condition": [ENABLED],
+     "action": [
+         {"choose": [
+             # the all-clear is the same event seen from the other side, and
+             # saying nothing when the air improves leaves the user wondering
+             {"conditions": [{"condition": "trigger", "id": "good"}],
+              "sequence": send_text(PM25_CLEAR_CAPTION)},
+             {"conditions": [
+                 {"condition": "trigger", "id": "bad"},
+                 {"condition": "template",
+                  "value_template": pm25_alert_condition()}],
+              "sequence": send_text(PM25_CAPTION)},
+         ]},
+     ],
+     "mode": "single", "max_exceeded": "silent"},
 
     {"id": "weather_rain_alert",
      "alias": "แจ้งเตือนฝน 24 ชม. สูง",
-     "trigger": [{"platform": "state", "entity_id": "sensor.rain24_home"}],
-     "condition": [
-         ENABLED,
-         {"condition": "template",
-          "value_template": "{{ states('sensor.rain24_home')|float(0) > states('input_number.rain_alert_threshold')|float(0) }}"},
-         cooldown("weather_rain_alert")],
+     # same fix as PM2.5: a crossing, not every update of the sensor
+     "trigger": [
+         {"platform": "numeric_state", "entity_id": "sensor.rain24_home",
+          "above": "input_number.rain_alert_threshold",
+          "for": {"minutes": PM25_FOR_MIN}},
+     ],
+     "condition": [ENABLED],
      "action": send_photo(RAIN24_CAPTION), "mode": "single", "max_exceeded": "silent"},
 
     {"id": "weather_rain_approaching",
      "alias": "แจ้งเตือน ฝนกำลังจะมาถึงบ้าน",
+     # the radar sensor only updates every 5 minutes, so requiring the state to
+     # hold for one cycle costs nothing in freshness and removes single-poll
+     # blips - which is what the cooldown was for, and it never worked
      "trigger": [{"platform": "state", "entity_id": "binary_sensor.radar_rain_approaching",
-                  "from": "off", "to": "on"}],
-     "condition": [ENABLED, cooldown("weather_rain_approaching", 3600)],
+                  "from": "off", "to": "on", "for": {"minutes": 5}}],
+     "condition": [ENABLED],
      "action": send_photo(APPROACH_CAPTION), "mode": "single", "max_exceeded": "silent"},
 
     {"id": "weather_rain_now",
      "alias": "แจ้งเตือน ฝนตกที่บ้าน",
      "trigger": [{"platform": "state", "entity_id": "binary_sensor.radar_rain_now",
-                  "from": "off", "to": "on"}],
-     "condition": [ENABLED, cooldown("weather_rain_now", 3600)],
+                  "from": "off", "to": "on", "for": {"minutes": 5}}],
+     "condition": [ENABLED],
      "action": send_photo(RAIN_NOW_CAPTION), "mode": "single", "max_exceeded": "silent"},
 
     # Weekly, and it prints whatever the scorer says - including that the log
