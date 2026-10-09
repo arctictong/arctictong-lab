@@ -17,6 +17,16 @@ Every sibling project is its own repository and is **not** part of this one:
   (headscale nodes, service probes, Proxmox containers/VMs) behind
   `/api/nodes`, `/api/services`, `/api/pve/summary`, plus the `/dashboard/` page.
   Python + FastAPI; `dashboard/README.md` is the entry point.
+- **`ha-weather/`** — Home Assistant rain-radar + PM2.5 + nowcast package for
+  Bueng Kum, Bangkok: telegrams a rendered map and scores the forecast models
+  against what actually fell. `ha-weather/README.md` is the entry point.
+- **`tmd-radar/`** — two standalone pages that view TMD public radar products
+  (the national composite and the BKK nowcast), plus the PHP CORS proxy the
+  nowcast page fetches through. See `tmd-radar/README.md`.
+- **`ops/`** — by-hand homelab ops scripts that belong to no deployed service;
+  currently the read-only Proxmox audit `pve-audit.sh`. See `ops/README.md`.
+- **`note-app-config/`** — the few tracked files that carry the note-app
+  credential fix (the app itself is local, not version controlled).
 - **`.scratch/ops-dashboard/`** — the board (`README.md`) and the tickets the
   dashboard and tsguard v2 were sliced into (`issues/01` … `issues/09`). These
   are the reasoning behind the code, not the code itself: what was tried, what

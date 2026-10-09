@@ -1,0 +1,315 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TMD Nowcast API</title>
+</head>
+<body style="margin: 0; padding: 20px; background: #f0f0f0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; text-align: center;">
+    <div id="status" style="color: #333; font-weight: bold; font-family: monospace; font-size: 1.2rem; white-space: pre;">[--------------------] 0/20</div>
+
+    <script>
+        const PROXY_URL = "https://gainer.azurewebsites.net/weather/tmd_proxy.php?url=";
+        const BASE_URL = "https://satda.tmd.go.th/wp-content/uploads/data/nowcasting/bkk/loop/";
+        
+        let framesProcessed = 0;
+        function updateProgress() {
+            framesProcessed++;
+            const total = 20;
+            const filled = Math.floor((framesProcessed / total) * 20);
+            const empty = 20 - filled;
+            const bar = "[" + "=".repeat(filled) + "-".repeat(empty) + "]";
+            const percent = Math.round((framesProcessed / total) * 100);
+            document.getElementById('status').textContent = `${bar} ${percent}%`;
+        }
+
+        function getProxyUrl(targetUrl) {
+            return PROXY_URL + encodeURIComponent(targetUrl);
+        }
+
+        const BOUNDS_NOW = {
+            "lat_min": 12.199701331177776,
+            "lat_max": 15.08194231403612,
+            "lon_min": 99.1473353511044,
+            "lon_max": 102.10104080305035
+        };
+
+        const BOUNDS_FORECAST = {
+            "lat_min": 12.199701309204102,
+            "lat_max": 15.081942558288574,
+            "lon_min": 99.1473388671875,
+            "lon_max": 102.10104370117188
+        };
+
+        const COLOR_LEVELS = {
+            "very_heavy": [[128,0,128]],
+            "heavy": [[241,0,0], [229,0,92], [246,15,239]], 
+            "moderate": [[255,85,0], [239,159,0], [225,150,0]], 
+            "light": [[255,200,0], [247,247,0], [225,225,0], [216,216,0]], 
+            "drizzle": [[0,244,0], [0,229,0], [0,208,69], [0,203,0]], 
+            "cloudy": [[0,189,0], [0,170,0]] 
+        };
+
+        function getThailandTime() {
+            const now = new Date();
+            const utc = now.getTime();
+            return new Date(utc + (3600000 * 7)); 
+        }
+
+        function formatTimestamp(date) {
+            const Y = date.getUTCFullYear();
+            const M = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const D = String(date.getUTCDate()).padStart(2, '0');
+            const h = String(date.getUTCHours()).padStart(2, '0');
+            const m = String(date.getUTCMinutes()).padStart(2, '0');
+            return `${Y}${M}${D}_${h}${m}00`;
+        }
+
+        function formatISOTimestamp(date) {
+            const Y = date.getUTCFullYear();
+            const M = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const D = String(date.getUTCDate()).padStart(2, '0');
+            const h = String(date.getUTCHours()).padStart(2, '0');
+            const m = String(date.getUTCMinutes()).padStart(2, '0');
+            return `${Y}-${M}-${D}T${h}:${m}:00+07:00`;
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        const classificationCache = new Map();
+        function classifyPixel(r, g, b, a) {
+            if (a < 10) return "none";
+            const key = (r << 16) | (g << 8) | b;
+            if (classificationCache.has(key)) return classificationCache.get(key);
+
+            let bestDistSq = Infinity;
+            let bestLevel = "none";
+            for (const [level, colors] of Object.entries(COLOR_LEVELS)) {
+                for (const [cr, cg, cb] of colors) {
+                    const distSq = (r-cr)**2 + (g-cg)**2 + (b-cb)**2;
+                    if (distSq < bestDistSq) {
+                        bestDistSq = distSq;
+                        bestLevel = level;
+                    }
+                }
+            }
+            const result = bestDistSq < 6400 ? bestLevel : "unknown";
+            classificationCache.set(key, result);
+            return result;
+        }
+
+        async function loadImageData(url) {
+            try {
+                const response = await fetch(getProxyUrl(url));
+                if (!response.ok) return null;
+                
+                const lastModified = response.headers.get("X-Last-Modified");
+                const blob = await response.blob();
+                const bitmap = await createImageBitmap(blob);
+                
+                const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(bitmap, 0, 0);
+                const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+                bitmap.close();
+
+                return { 
+                    width: imageData.width, 
+                    height: imageData.height, 
+                    data: imageData.data,
+                    lastModified: lastModified
+                };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function getRelevantPixels(lat, lon, radius, bounds, width, height) {
+            const pixels = [];
+            const dLat = radius / 110.574;
+            const dLon = radius / (111.320 * Math.cos(lat * Math.PI / 180));
+            
+            const minX = Math.max(0, Math.floor(((lon - dLon) - bounds.lon_min) / (bounds.lon_max - bounds.lon_min) * width));
+            const maxX = Math.min(width - 1, Math.ceil(((lon + dLon) - bounds.lon_min) / (bounds.lon_max - bounds.lon_min) * width));
+            const minY = Math.max(0, Math.floor((bounds.lat_max - (lat + dLat)) / (bounds.lat_max - bounds.lat_min) * height));
+            const maxY = Math.min(height - 1, Math.ceil((bounds.lat_max - (lat - dLat)) / (bounds.lat_max - bounds.lat_min) * height));
+
+            for (let y = minY; y <= maxY; y++) {
+                for (let x = minX; x <= maxX; x++) {
+                    const pLon = bounds.lon_min + (x / width) * (bounds.lon_max - bounds.lon_min);
+                    const pLat = bounds.lat_max - (y / height) * (bounds.lat_max - bounds.lat_min);
+                    if (getDistance(lat, lon, pLat, pLon) <= radius) {
+                        pixels.push({idx: (y * width + x) * 4});
+                    }
+                }
+            }
+            return pixels;
+        }
+
+        function outputJson(data) {
+            const jsonText = JSON.stringify(data, null, 2);
+            document.documentElement.innerHTML = `
+                <head><meta charset="UTF-8"></head>
+                <body style="margin: 0; padding: 20px; background: white; font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">${jsonText}</body>
+            `;
+        }
+
+        async function processAll() {
+            const statusEl = document.getElementById('status');
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                let latParam = urlParams.get('lat');
+                let lonParam = urlParams.get('lon');
+                let radiusParam = urlParams.get('radius') || "3";
+
+                let lat, lon, radius;
+
+                if (!latParam || !lonParam) {
+                    try {
+                        const pos = await new Promise((resolve, reject) => {
+                            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+                        });
+                        lat = pos.coords.latitude;
+                        lon = pos.coords.longitude;
+                    } catch (e) {
+                        lat = 13.7563;
+                        lon = 100.5018;
+                    }
+                } else {
+                    lat = parseFloat(latParam);
+                    lon = parseFloat(lonParam);
+                }
+
+                radius = parseFloat(radiusParam);
+
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.set('lat', lat.toFixed(5));
+                newUrl.searchParams.set('lon', lon.toFixed(5));
+                newUrl.searchParams.set('radius', radius);
+                window.history.replaceState({}, '', newUrl);
+
+                if (lat < BOUNDS_NOW.lat_min || lat > BOUNDS_NOW.lat_max || 
+                    lon < BOUNDS_NOW.lon_min || lon > BOUNDS_NOW.lon_max) {
+                    outputJson({
+                        error: "Requested coordinates are outside the TMD radar coverage area.",
+                        metadata: { lat, lon, radius_km: radius, generated_at: new Date().toISOString() }
+                    });
+                    return;
+                }
+
+                let thTime = getThailandTime();
+                thTime.setMinutes(Math.floor(thTime.getMinutes() / 15) * 15);
+                thTime.setSeconds(0);
+                thTime.setMinutes(thTime.getMinutes() - 45);
+                
+                const intensityRank = ["cloudy", "drizzle", "light", "moderate", "heavy", "very_heavy"];
+                let generatedAt = null;
+                let pixelsNow = null, pixelsForecast = null;
+
+                // Fire all 20 requests in parallel immediately
+                const frameMetadata = [];
+                const fetchPromises = [];
+                for (let i = 0; i < 20; i++) {
+                    const frameTime = new Date(thTime.getTime() + i * 15 * 60000);
+                    const ts = formatTimestamp(frameTime);
+                    const isoTs = formatISOTimestamp(frameTime);
+                    const target = `${BASE_URL}${ts}.png`;
+                    
+                    frameMetadata.push({ i, ts, isoTs });
+                    fetchPromises.push(loadImageData(target));
+                }
+
+                // Create a "ready" promise for the pixel mapping logic
+                let resolveMaps;
+                const mapsReady = new Promise(resolve => resolveMaps = resolve);
+
+                const framePromises = fetchPromises.map((p, idx) => p.then(async img => {
+                    try {
+                        if (!img) return null;
+                        
+                        // If we are the first successful image, initialize the pixel maps
+                        if (!pixelsNow) {
+                            pixelsNow = getRelevantPixels(lat, lon, radius, BOUNDS_NOW, img.width, img.height);
+                            pixelsForecast = getRelevantPixels(lat, lon, radius, BOUNDS_FORECAST, img.width, img.height);
+                            resolveMaps();
+                        }
+
+                        // Wait until maps are initialized by whoever finished first
+                        await mapsReady;
+
+                        const { i, ts, isoTs } = frameMetadata[idx];
+                        const isFirst = (i === 0);
+                        if (isFirst && img.lastModified) {
+                            try { generatedAt = new Date(img.lastModified).toISOString(); } catch(e) {}
+                        }
+
+                        const relevantPixels = isFirst ? pixelsNow : pixelsForecast;
+                        let rainPixels = 0, maxIntensityIdx = -1;
+
+                        for (const {idx: pIdx} of relevantPixels) {
+                            const level = classifyPixel(img.data[pIdx], img.data[pIdx+1], img.data[pIdx+2], img.data[pIdx+3]);
+                            if (level !== "none" && level !== "unknown") {
+                                // Count light, moderate, heavy, and very_heavy as "rain"
+                                const rank = intensityRank.indexOf(level);
+                                if (rank >= intensityRank.indexOf("light")) {
+                                    rainPixels++;
+                                }
+                                if (rank > maxIntensityIdx) maxIntensityIdx = rank;
+                            }
+                        }
+
+                        return {
+                            ts,
+                            timestamp: isoTs,
+                            status: maxIntensityIdx >= 0 ? intensityRank[maxIntensityIdx] : "clear",
+                            percent_rain: relevantPixels.length > 0 ? parseFloat(((rainPixels / relevantPixels.length) * 100).toFixed(2)) : 0
+                        };
+                    } finally {
+                        updateProgress();
+                    }
+                }));
+
+                const rawResults = await Promise.all(framePromises);
+                const forecasts = rawResults.filter(f => f !== null).sort((a, b) => a.ts.localeCompare(b.ts));
+
+                if (forecasts.length === 0) {
+                    outputJson({ error: "No radar frames found.", metadata: { generated_at: new Date().toISOString() } });
+                    return;
+                }
+
+                let finalGeneratedAt = "";
+                if (generatedAt) {
+                    const d = new Date(generatedAt);
+                    const shiftedToTh = new Date(d.getTime() + (3600000 * 7));
+                    finalGeneratedAt = formatISOTimestamp(shiftedToTh);
+                } else {
+                    finalGeneratedAt = formatISOTimestamp(getThailandTime());
+                }
+
+                const [obsRaw, ...forecastsRaw] = forecasts;
+                const { ts: obsTs, ...observation } = obsRaw;
+
+                outputJson({
+                    metadata: { lat, lon, radius_km: radius, generated_at: finalGeneratedAt },
+                    observation,
+                    forecasts: forecastsRaw.map(({ts, ...rest}) => rest)
+                });
+
+            } catch (err) {
+                statusEl.innerHTML = `<span style="color:red">Error: ${err.message}</span>`;
+                console.error(err);
+            }
+        }
+
+        processAll();
+    </script>
+</body>
+</html>

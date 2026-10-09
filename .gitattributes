@@ -1,0 +1,23 @@
+# Line endings.  This checkout is on Windows with core.autocrlf=true, so
+# without rules here every new file is converted to CRLF on checkout.  Anything
+# that ships to a Linux host has to stay LF: a CRLF shebang is
+# "bad interpreter: /bin/bash^M", and a CRLF after a line-continuation backslash
+# silently changes the command.  The web pages and the PHP proxy are served
+# verbatim, so their bytes must not drift either.
+#
+# Per-project rules stay with their project (dashboard/.gitattributes,
+# tsguard/.gitattributes); this only covers what lives at the workspace root and
+# in the folders that have no rules of their own (ops/, tmd-radar/).
+
+.gitattributes text eol=lf
+
+*.sh    text eol=lf
+*.html  text eol=lf
+*.php   text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.json  text eol=lf
+
+# Windows-side tooling.  CRLF is correct here and harmless.
+*.ps1   text eol=crlf

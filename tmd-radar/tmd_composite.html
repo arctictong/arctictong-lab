@@ -1,0 +1,2311 @@
+﻿<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="TMD Radar Monitor — แผนที่เรดาร์คอมโพสิทแบบ Real-time ตรวจสภาพอากาศกลุ่มฝนทั่วประเทศไทย กรมอุตุนิยมวิทยา" />
+  <title>TMD Radar Monitor | กรมอุตุนิยมวิทยา</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet" />
+  <link href="https://unpkg.com/maplibre-gl@4.5.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.5.2/dist/maplibre-gl.js"></script>
+  <style>
+    /* ── Tokens ────────────────────────────────────────── */
+    :root {
+      --navy: #0D47A1;
+      --teal: #00796B;
+      --teal-dk: #123F3A;
+      --teal-lt: #00897B;
+      --green: #43A047;
+      --orange: #E65100;
+      --bg: #0B1622;
+      --surf: #152232;
+      --surf2: #1E3045;
+      --bdr: rgba(255, 255, 255, .09);
+      --txt: #D8E6F3;
+      --muted: #7A99B8;
+      --r-sm: 6px;
+      --r-md: 10px;
+      --r-lg: 14px;
+      --sh: 0 4px 20px rgba(0, 0, 0, .5);
+      --t: .2s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    /* ── Reset / Full-screen ───────────────────────────── */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Prompt', 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--txt)
+    }
+
+    body {
+      display: flex;
+      flex-direction: column
+    }
+
+    /* ── HEADER ────────────────────────────────────────── */
+    .hd {
+      height: 56px;
+      flex-shrink: 0;
+      background: linear-gradient(135deg, var(--teal-dk), #1C5047 60%, #1A6B5A);
+      border-bottom: 1px solid var(--bdr);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 12px;
+      z-index: 200
+    }
+
+    .hd-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0
+    }
+
+    .hd-icon {
+      width: 34px;
+      height: 34px;
+      background: rgba(255, 255, 255, .15);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      border: 1.5px solid rgba(255, 255, 255, .25)
+    }
+
+    .hd-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff
+    }
+
+    .hd-sub {
+      font-size: 9.5px;
+      font-weight: 300;
+      color: rgba(255, 255, 255, .6);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      font-family: 'Inter', sans-serif
+    }
+
+    /* Product title badge */
+    .prod-sel {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 0, 0, .3);
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 22px;
+      padding: 4px 12px;
+      margin: 0 auto
+    }
+
+    .prod-title-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #fff;
+      font-family: 'Prompt', 'Inter', sans-serif;
+      font-size: 12.5px;
+      font-weight: 500;
+      white-space: nowrap
+    }
+
+    .prod-title-badge .pi {
+      font-size: 14px
+    }
+
+    /* ⓘ info button */
+    .ibtn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255, 255, 255, .35);
+      background: transparent;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: rgba(255, 255, 255, .8);
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      flex-shrink: 0;
+      transition: all var(--t);
+      font-family: 'Inter', sans-serif
+    }
+
+    .ibtn:hover {
+      background: rgba(255, 255, 255, .2);
+      color: #fff;
+      border-color: rgba(255, 255, 255, .7)
+    }
+
+    .prod-ibtn {
+      margin-left: 3px
+    }
+
+    /* Header right */
+    .hd-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      margin-left: auto
+    }
+
+    .hd-clock {
+      font-size: 11px;
+      font-family: 'Inter', monospace;
+      color: rgba(255, 255, 255, .55);
+      letter-spacing: .02em
+    }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid rgba(255, 255, 255, .12);
+      border-radius: 14px;
+      padding: 3px 9px;
+      font-size: 10.5px;
+      color: rgba(255, 255, 255, .75);
+      font-family: 'Inter', sans-serif
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: #69F0AE;
+      border-radius: 50%;
+      animation: plive 2s ease-in-out infinite
+    }
+
+    @keyframes plive {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(105, 240, 174, .6)
+      }
+
+      50% {
+        opacity: .8;
+        transform: scale(1.2);
+        box-shadow: 0 0 0 4px rgba(105, 240, 174, 0)
+      }
+    }
+
+    .hd-back {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid rgba(255, 255, 255, .12);
+      border-radius: var(--r-sm);
+      color: rgba(255, 255, 255, .65);
+      text-decoration: none;
+      font-size: 11px;
+      transition: background var(--t)
+    }
+
+    .hd-back:hover {
+      background: rgba(255, 255, 255, .15);
+      color: #fff
+    }
+
+    /* ── INFO MODAL ────────────────────────────────────── */
+    .modal-ov {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .55);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+      backdrop-filter: blur(4px)
+    }
+
+    .modal-ov.vis {
+      opacity: 1;
+      pointer-events: all
+    }
+
+    .modal-box {
+      background: var(--surf);
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 16px;
+      padding: 22px;
+      max-width: 400px;
+      width: calc(100% - 40px);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .7);
+      position: relative;
+      animation: mslide .2s ease
+    }
+
+    @keyframes mslide {
+      from {
+        transform: translateY(12px);
+        opacity: 0
+      }
+
+      to {
+        transform: none;
+        opacity: 1
+      }
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 26px;
+      height: 26px;
+      background: rgba(255, 255, 255, .07);
+      border: none;
+      border-radius: 50%;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: background var(--t)
+    }
+
+    .modal-close:hover {
+      background: rgba(255, 255, 255, .15);
+      color: #fff
+    }
+
+    .modal-box h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 2px
+    }
+
+    .modal-sub {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 12px
+    }
+
+    .modal-box hr {
+      border: none;
+      border-top: 1px solid var(--bdr);
+      margin: 12px 0
+    }
+
+    .modal-box p {
+      font-size: 12.5px;
+      color: rgba(255, 255, 255, .8);
+      line-height: 1.65;
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 8px
+    }
+
+    .modal-box ol {
+      font-size: 12.5px;
+      color: rgba(255, 255, 255, .8);
+      font-family: 'Inter', sans-serif;
+      line-height: 1.7;
+      padding-left: 18px;
+      margin-bottom: 8px
+    }
+
+    .formula {
+      background: rgba(0, 121, 107, .18);
+      border: 1px solid rgba(0, 121, 107, .4);
+      border-radius: var(--r-sm);
+      padding: 8px 14px;
+      font-family: 'Inter', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: #4DB6AC;
+      margin: 8px 0;
+      text-align: center
+    }
+
+    .itags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 10px
+    }
+
+    .itag {
+      background: var(--surf2);
+      border: 1px solid var(--bdr);
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 10.5px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif
+    }
+
+    /* ── MAP LAYOUT ────────────────────────────────────── */
+    .map-layout {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative
+    }
+
+    #map {
+      flex: 1;
+      position: relative
+    }
+
+    /* Loading overlay */
+    .map-load {
+      position: absolute;
+      inset: 0;
+      background: rgba(11, 22, 34, .88);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      gap: 12px;
+      transition: opacity .4s
+    }
+
+    .map-load.hidden {
+      opacity: 0;
+      pointer-events: none
+    }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(255, 255, 255, .12);
+      border-top-color: #69F0AE;
+      border-radius: 50%;
+      animation: spin .7s linear infinite
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    .load-txt {
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, .5);
+      font-family: 'Inter', sans-serif
+    }
+
+    /* ── STATUS BAR (overlay on map bottom) ────────────── */
+    .map-status {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 280px;
+      height: 34px;
+      background: rgba(11, 22, 34, .88);
+      backdrop-filter: blur(8px);
+      border-top: 1px solid rgba(255, 255, 255, .07);
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      gap: 0;
+      z-index: 10;
+      font-family: 'Inter', monospace;
+      font-size: 11px
+    }
+
+    .st-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 8px
+    }
+
+    .st-lbl {
+      font-size: 8.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted)
+    }
+
+    .st-val {
+      font-weight: 500;
+      color: var(--txt)
+    }
+
+    .st-utc {
+      color: #90CAF9
+    }
+
+    .st-ict {
+      color: #A5D6A7
+    }
+
+    .st-sep {
+      width: 1px;
+      height: 16px;
+      background: rgba(255, 255, 255, .1)
+    }
+
+    .st-prod {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(0, 121, 107, .2);
+      border: 1px solid rgba(0, 121, 107, .4);
+      border-radius: 9px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #4DB6AC;
+      margin-left: auto
+    }
+
+    /* ── SIDEBAR ───────────────────────────────────────── */
+    .sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--surf);
+      border-left: 1px solid var(--bdr);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 10
+    }
+
+    .sb-scroll {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, .08) transparent
+    }
+
+    .sb-scroll::-webkit-scrollbar {
+      width: 3px
+    }
+
+    .sb-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, .12);
+      border-radius: 2px
+    }
+
+    /* Section */
+    .sb-sec {
+      border-bottom: 1px solid var(--bdr);
+      padding: 13px 15px
+    }
+
+    .sb-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px
+    }
+
+    /* ── PLAYER ─────────────────────────────────────────── */
+    .pl-btns {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      margin-bottom: 9px
+    }
+
+    .pl-btn {
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surf2);
+      border: 1px solid var(--bdr);
+      border-radius: var(--r-sm);
+      color: var(--txt);
+      cursor: pointer;
+      transition: all var(--t);
+      flex-shrink: 0
+    }
+
+    .pl-btn:hover {
+      border-color: var(--teal);
+      background: rgba(0, 121, 107, .15)
+    }
+
+    .pl-btn.play {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: var(--teal);
+      border-color: var(--teal);
+      font-size: 15px
+    }
+
+    .pl-btn.play:hover {
+      background: var(--teal-lt)
+    }
+
+    .fr-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 5px
+    }
+
+    .fr-slider {
+      width: 100%;
+      height: 3px;
+      appearance: none;
+      background: var(--surf2);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      margin-bottom: 9px;
+      display: block
+    }
+
+    .fr-slider::-webkit-slider-thumb {
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      background: var(--teal);
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: 0 0 0 3px rgba(0, 121, 107, .25)
+    }
+
+    .sp-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 10.5px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif
+    }
+
+    .sp-row select {
+      background: var(--surf2);
+      border: 1px solid var(--bdr);
+      border-radius: var(--r-sm);
+      color: var(--txt);
+      font-size: 10.5px;
+      padding: 3px 6px;
+      cursor: pointer
+    }
+
+    /* ── TIMESTAMP ──────────────────────────────────────── */
+    .ts-unified {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surf2);
+      border: 1px solid var(--bdr);
+      border-radius: var(--r-sm);
+      padding: 8px 10px
+    }
+
+    .ts-badge {
+      font-size: 8.5px;
+      font-weight: 700;
+      background: rgba(0, 121, 107, .25);
+      border: 1px solid rgba(0, 121, 107, .5);
+      color: #69F0AE;
+      padding: 2px 6px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      letter-spacing: .04em
+    }
+
+    .ts-val {
+      color: var(--txt);
+      font-weight: 500;
+      font-size: 11.5px
+    }
+
+    /* ── OPACITY ────────────────────────────────────────── */
+    .op-row {
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .op-row label {
+      font-size: 10.5px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif;
+      flex-shrink: 0
+    }
+
+    .op-row input[type=range] {
+      flex: 1;
+      height: 3px;
+      appearance: none;
+      background: var(--surf2);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer
+    }
+
+    .op-row input[type=range]::-webkit-slider-thumb {
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      background: var(--orange);
+      border-radius: 50%;
+      cursor: pointer
+    }
+
+    .op-val {
+      font-size: 10px;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif;
+      min-width: 28px;
+      text-align: right
+    }
+
+    /* ── LAYER ROWS ─────────────────────────────────────── */
+    .lyr-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 0
+    }
+
+    .lyr-info {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: var(--txt);
+      font-family: 'Inter', sans-serif
+    }
+
+    .lyr-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0
+    }
+
+    .lyr-cnt {
+      font-size: 9.5px;
+      color: var(--muted);
+      background: var(--surf2);
+      border-radius: 7px;
+      padding: 1px 5px
+    }
+
+    /* Toggle */
+    .tgl {
+      position: relative;
+      width: 32px;
+      height: 17px;
+      flex-shrink: 0
+    }
+
+    .tgl input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute
+    }
+
+    .tgl-tr {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, .1);
+      border-radius: 9px;
+      transition: background var(--t);
+      cursor: pointer
+    }
+
+    .tgl input:checked+.tgl-tr {
+      background: var(--teal)
+    }
+
+    .tgl-tr::after {
+      content: '';
+      position: absolute;
+      width: 13px;
+      height: 13px;
+      background: #fff;
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      transition: transform var(--t);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .3)
+    }
+
+    .tgl input:checked+.tgl-tr::after {
+      transform: translateX(15px)
+    }
+
+    /* ── DOWNLOAD ───────────────────────────────────────── */
+    .dl-slot {
+      font-size: 10.5px;
+      font-family: 'Inter', sans-serif;
+      color: var(--muted);
+      margin-bottom: 5px;
+      display: block
+    }
+
+    .dl-cd {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(13, 71, 161, .18);
+      border: 1px solid rgba(13, 71, 161, .35);
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 10px;
+      font-family: 'Inter', sans-serif;
+      color: #90CAF9;
+      width: fit-content;
+      margin-bottom: 8px
+    }
+
+    .dl-a {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: var(--r-sm);
+      border: 1.5px solid;
+      font-family: 'Prompt', 'Inter', sans-serif;
+      font-size: 11.5px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all var(--t);
+      margin-bottom: 4px
+    }
+
+    .dl-nc {
+      background: var(--navy);
+      border-color: var(--navy);
+      color: #fff
+    }
+
+    .dl-nc:hover {
+      background: #1565C0
+    }
+
+    .dl-txt {
+      background: transparent;
+      border-color: var(--teal);
+      color: #4DB6AC
+    }
+
+    .dl-txt:hover {
+      background: var(--teal);
+      color: #fff
+    }
+
+    /* ── FOOTER ────────────────────────────────────────── */
+    .ft {
+      height: 30px;
+      flex-shrink: 0;
+      background: rgba(11, 22, 34, .95);
+      border-top: 1px solid var(--bdr);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      font-family: 'Inter', sans-serif;
+      font-size: 10px;
+      color: rgba(255, 255, 255, .35)
+    }
+
+    .ft a {
+      color: rgba(255, 255, 255, .35);
+      text-decoration: none;
+      transition: color var(--t)
+    }
+
+    .ft a:hover {
+      color: rgba(255, 255, 255, .7)
+    }
+
+    .ft-sep {
+      color: rgba(255, 255, 255, .15);
+      margin: 0 6px
+    }
+
+    /* Mobile sidebar */
+    .sb-toggle {
+      display: none;
+      position: absolute;
+      bottom: 44px;
+      right: 12px;
+      z-index: 20;
+      width: 42px;
+      height: 42px;
+      background: var(--teal);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0, 121, 107, .5);
+      color: #fff
+    }
+
+    @media(max-width:900px) {
+
+      .hd-sub,
+      .hd-clock {
+        display: none
+      }
+
+      .sidebar {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        transform: translateX(100%);
+        transition: transform .25s ease;
+        box-shadow: -4px 0 20px rgba(0, 0, 0, .5)
+      }
+
+      .sidebar.open {
+        transform: translateX(0)
+      }
+
+      .sb-toggle {
+        display: flex
+      }
+
+      .map-status {
+        right: 0
+      }
+    }
+
+    @media(max-width:480px) {
+      .prod-btn {
+        padding: 4px 9px;
+        font-size: 11px
+      }
+
+      .prod-btn .pi {
+        display: none
+      }
+    }
+
+    /* ── COLORBAR OVERLAY ───────────────────────────────── */
+    .cbar-overlay {
+      position: absolute;
+      bottom: 46px;
+      left: 14px;
+      right: auto;
+      z-index: 15;
+      background: rgba(11, 22, 34, .92);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, .14);
+      border-radius: 8px;
+      padding: 6px 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+      font-family: 'Prompt', 'Inter', sans-serif;
+      transition: all .2s ease;
+      user-select: none;
+      max-height: calc(100vh - 110px);
+      overflow-y: auto
+    }
+
+    .cbar-overlay.minimized .cbar-body {
+      display: none
+    }
+
+    .cbar-overlay.hidden {
+      display: none !important
+    }
+
+    .cbar-head {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 5px;
+      padding-bottom: 3px;
+      border-bottom: 1px solid rgba(255, 255, 255, .08)
+    }
+
+    .cbar-title {
+      font-size: 9.5px;
+      font-weight: 600;
+      color: #E2E8F0;
+      white-space: nowrap
+    }
+
+    .cbar-unit {
+      font-size: 8px;
+      font-weight: 700;
+      background: rgba(0, 121, 107, .3);
+      color: #69F0AE;
+      border: 1px solid rgba(0, 121, 107, .5);
+      border-radius: 3px;
+      padding: 1px 4px;
+      font-family: 'Inter', monospace
+    }
+
+    .cbar-min-btn {
+      margin-left: auto;
+      background: rgba(255, 255, 255, .08);
+      border: none;
+      border-radius: 3px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 10px;
+      line-height: 1;
+      padding: 1px 4px;
+      transition: background var(--t), color var(--t)
+    }
+
+    .cbar-min-btn:hover {
+      background: rgba(255, 255, 255, .2);
+      color: #fff
+    }
+
+    /* Desktop vertical strip */
+    .cbar-strip {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5px
+    }
+
+    .cbar-item {
+      display: flex;
+      align-items: center;
+      gap: 6px
+    }
+
+    .cbar-swatch {
+      width: 13px;
+      height: 9.5px;
+      border-radius: 2px;
+      flex-shrink: 0;
+      box-shadow: 0 0 2px rgba(0, 0, 0, .5)
+    }
+
+    .cbar-val {
+      font-family: 'Inter', monospace;
+      font-size: 8.5px;
+      font-weight: 500;
+      color: #F1F5F9;
+      white-space: nowrap;
+      min-width: 32px
+    }
+
+    .cbar-val-sub {
+      font-family: 'Inter', monospace;
+      font-size: 8px;
+      color: #94A3B8;
+      white-space: nowrap;
+      margin-left: auto
+    }
+
+    .cbar-h-wrap {
+      display: none
+    }
+
+    /* ── MOBILE: SLIM HORIZONTAL COLORBAR ───────────────── */
+    @media(max-width:768px) {
+      .cbar-overlay {
+        bottom: 38px;
+        left: 8px;
+        right: 58px;
+        /* ไม่ทับปุ่มเมนูมือถือ */
+        padding: 4px 7px;
+        border-radius: 6px;
+      }
+
+      .cbar-head {
+        margin-bottom: 2px;
+        padding-bottom: 1px;
+        border-bottom: none;
+      }
+
+      .cbar-strip {
+        display: none
+      }
+
+      /* ซ่อนแถบแนวตั้งยาวตอนเข้ามือถือ */
+      .cbar-h-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100%;
+      }
+
+      .cbar-h-bar {
+        display: flex;
+        height: 8px;
+        border-radius: 2px;
+        overflow: hidden;
+        width: 100%;
+        box-shadow: 0 0 2px rgba(0, 0, 0, .5);
+      }
+
+      .cbar-h-seg {
+        flex: 1;
+        height: 100%;
+      }
+
+      .cbar-h-labels {
+        display: flex;
+        justify-content: space-between;
+        font-family: 'Inter', monospace;
+        font-size: 7.5px;
+        color: #CBD5E1;
+        padding: 0 1px;
+        line-height: 1;
+      }
+    }
+
+    /* ── CUSTOM PIN ────────────────────────────────────── */
+    .custom-pin {
+      position: relative;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      user-select: none;
+      transition: transform .2s ease;
+    }
+
+    .custom-pin:hover {
+      transform: scale(1.1);
+    }
+
+    .pin-icon-box {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      z-index: 2;
+      border: 2.5px solid #0D47A1;
+      position: relative;
+    }
+
+    .tmd-pin .pin-icon-box {
+      border-color: #00796B;
+    }
+
+    .pin-tag {
+      position: absolute;
+      top: -24px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #FFFFFF;
+      font-family: 'Prompt', 'Inter', sans-serif;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 12px;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      pointer-events: none;
+      letter-spacing: .02em;
+    }
+
+    .pin-pulse {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(13, 71, 161, 0.35);
+      z-index: 1;
+      pointer-events: none;
+      animation: pin-pulse 2.2s infinite ease-out;
+    }
+
+    .tmd-pin .pin-pulse {
+      background: rgba(0, 121, 107, 0.35);
+    }
+
+    @keyframes pin-pulse {
+      0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+      }
+
+      100% {
+        transform: translate(-50%, -50%) scale(2.8);
+        opacity: 0;
+      }
+    }
+
+    .loc-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 10px;
+      margin-top: 8px;
+      background: rgba(0, 121, 107, .12);
+      border: 1px solid rgba(0, 121, 107, .35);
+      border-radius: var(--r-sm);
+      color: #4DB6AC;
+      font-family: 'Prompt', 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--t);
+    }
+
+    .loc-btn:hover {
+      background: var(--teal);
+      color: #FFFFFF;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ═══════════════════════ HEADER ════════════════════════ -->
+  <header class="hd" role="banner">
+    <a class="hd-brand" href="index_composite.html" aria-label="กรมอุตุนิยมวิทยา">
+      <div class="hd-icon" aria-hidden="true">🌦️</div>
+      <div>
+        <div class="hd-name">กรมอุตุนิยมวิทยา</div>
+        <div class="hd-sub">Thai Meteorological Department</div>
+      </div>
+    </a>
+
+    <!-- Product Title & Info -->
+    <div class="prod-sel" role="region" aria-label="ข้อมูลผลิตภัณฑ์เรดาร์">
+      <div class="prod-title-badge">
+        <span class="pi">📡</span> เรดาร์คอมโพสิท
+      </div>
+      <button class="ibtn prod-ibtn" id="btn-prod-info" title="ข้อมูล Radar Composite"
+        aria-label="ข้อมูล Radar Composite">i</button>
+    </div>
+
+    <div class="hd-right">
+      <span class="hd-clock" id="hd-clock" aria-label="เวลาประเทศไทย">กำลังโหลดเวลา...</span>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════ INFO MODAL ═══════════════════ -->
+  <div class="modal-ov" id="modal-ov" role="dialog" aria-modal="true" aria-label="ข้อมูล Product">
+    <div class="modal-box">
+      <button class="modal-close" id="modal-close" aria-label="ปิด">✕</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ MAP + SIDEBAR ════════════════ -->
+  <div class="map-layout">
+
+    <div id="map" role="application" aria-label="แผนที่เรดาร์">
+      <!-- Loading -->
+      <div class="map-load" id="map-load" aria-label="กำลังโหลด">
+        <div class="spinner"></div>
+        <span class="load-txt">กำลังโหลดแผนที่...</span>
+      </div>
+
+      <!-- Status bar overlay -->
+      <div class="map-status" aria-label="ข้อมูลสถานะ" role="status">
+        <div class="st-item">
+          <span class="st-lbl">เวลาตรวจวัด</span>
+          <span class="st-val st-ict" id="st-ict">--</span>
+        </div>
+        <div class="st-sep"></div>
+        <div class="st-item">
+          <span class="st-lbl">ลำดับภาพ</span>
+          <span class="st-val" id="st-frame" style="color:#69F0AE;font-weight:600">-</span>
+        </div>
+        <div class="st-prod" id="st-prod">📡 เรดาร์คอมโพสิท</div>
+      </div>
+
+      <!-- Colorbar Overlay บนหน้าแผนที่ -->
+      <div class="cbar-overlay" id="cbar-overlay" role="region" aria-label="แถบสีความเข้มฝน">
+        <div class="cbar-head">
+          <span class="cbar-title">ความเข้มฝน</span>
+          <span class="cbar-unit">มม./ชม.</span>
+          <button class="cbar-min-btn" id="cbar-min-btn" title="ย่อ/ขยาย" aria-label="ย่อ/ขยายแถบสี">−</button>
+        </div>
+        <div class="cbar-body" id="cbar-body">
+          <!-- Desktop Vertical Colorbar -->
+          <div class="cbar-strip">
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#EFE6F1"></span><span
+                class="cbar-val">&gt; 636.0</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#EFE6F1"></span><span
+                class="cbar-val">445.0</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#F3CBFA"></span><span
+                class="cbar-val">311.4</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#EA8CF8"></span><span
+                class="cbar-val">217.9</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#E345F5"></span><span
+                class="cbar-val">152.5</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#B72D54"></span><span
+                class="cbar-val">106.7</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#B72D54"></span><span
+                class="cbar-val">74.6</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#CA325D"></span><span
+                class="cbar-val">52.2</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#D43320"></span><span
+                class="cbar-val">36.5</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#E3622A"></span><span
+                class="cbar-val">25.6</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#D79C37"></span><span
+                class="cbar-val">17.9</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#D79C37"></span><span
+                class="cbar-val">12.5</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#F1C946"></span><span
+                class="cbar-val">8.76</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#D6D648"></span><span
+                class="cbar-val">6.13</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#DEDF4B"></span><span
+                class="cbar-val">4.29</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#F3F453"></span><span
+                class="cbar-val">3.00</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#7BEC4B"></span><span
+                class="cbar-val">2.10</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#73DE45"></span><span
+                class="cbar-val">1.47</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#69CB5A"></span><span
+                class="cbar-val">1.03</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#66C43C"></span><span
+                class="cbar-val">0.72</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#66C43C"></span><span
+                class="cbar-val">0.50</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#5EB738"></span><span
+                class="cbar-val">0.24</span></div>
+            <div class="cbar-item"><span class="cbar-swatch" style="background:#54A431"></span><span
+                class="cbar-val">0.21</span></div>
+          </div>
+
+          <!-- Mobile Horizontal Colorbar -->
+          <div class="cbar-h-wrap">
+            <div class="cbar-h-bar">
+              <span class="cbar-h-seg" style="background:#54A431" title="0.21 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#5EB738" title="0.24 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#66C43C" title="0.50 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#66C43C" title="0.72 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#69CB5A" title="1.03 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#73DE45" title="1.47 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#7BEC4B" title="2.10 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#F3F453" title="3.00 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#DEDF4B" title="4.29 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#D6D648" title="6.13 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#F1C946" title="8.76 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#D79C37" title="12.5 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#D79C37" title="17.9 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#E3622A" title="25.6 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#D43320" title="36.5 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#CA325D" title="52.2 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#B72D54" title="74.6 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#B72D54" title="106.7 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#E345F5" title="152.5 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#EA8CF8" title="217.9 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#F3CBFA" title="311.4 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#EFE6F1" title="445.0 mm/hr"></span>
+              <span class="cbar-h-seg" style="background:#EFE6F1" title="&gt; 636.0 mm/hr"></span>
+            </div>
+            <div class="cbar-h-labels">
+              <span>0.2</span>
+              <span>2.1</span>
+              <span>12.5</span>
+              <span>52.2</span>
+              <span>218</span>
+              <span>&gt;636</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile sidebar toggle -->
+    <button class="sb-toggle" id="sb-toggle" aria-label="เปิด/ปิด Sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="3" y1="6" x2="21" y2="6" />
+        <line x1="3" y1="18" x2="21" y2="18" />
+      </svg>
+    </button>
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar" role="complementary" aria-label="Controls">
+      <div class="sb-scroll">
+
+        <!-- Frame Player -->
+        <div class="sb-sec">
+          <div class="sb-title">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21" />
+            </svg>
+            ลำดับภาพเรดาร์
+          </div>
+          <div class="pl-btns">
+            <button class="pl-btn" id="pl-first" title="ภาพแรก" aria-label="ภาพแรก">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="19" y1="20" x2="9" y2="12" />
+                <line x1="5" y1="4" x2="5" y2="20" />
+                <line x1="19" y1="4" x2="9" y2="12" />
+              </svg>
+            </button>
+            <button class="pl-btn" id="pl-prev" title="ก่อนหน้า" aria-label="ก่อนหน้า">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <button class="pl-btn play" id="pl-play" aria-label="เล่น/หยุด" aria-pressed="false">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" id="play-ico">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+            </button>
+            <button class="pl-btn" id="pl-next" title="ถัดไป" aria-label="ถัดไป">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+            <button class="pl-btn" id="pl-last" title="ภาพล่าสุด" aria-label="ภาพล่าสุด">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="5" y1="4" x2="15" y2="12" />
+                <line x1="19" y1="4" x2="19" y2="20" />
+                <line x1="5" y1="20" x2="15" y2="12" />
+              </svg>
+            </button>
+          </div>
+          <div class="fr-info">
+            <span id="fr-lbl">ภาพที่ --</span>
+            <span id="fr-total">- / -</span>
+          </div>
+          <input type="range" class="fr-slider" id="fr-slider" min="0" max="0" value="0" aria-label="ลำดับภาพ" />
+          <div class="sp-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+            ความเร็ว:
+            <select id="sp-sel" aria-label="ความเร็วการเล่น">
+              <option value="2000">ช้ามาก (0.5×)</option>
+              <option value="1000">ช้า (1×)</option>
+              <option value="500" selected>ปกติ (2×)</option>
+              <option value="250">เร็ว (4×)</option>
+              <option value="150">เร็วมาก (6×)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Timestamp -->
+        <div class="sb-sec">
+          <div class="sb-title">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            เวลาตรวจวัด (เวลาประเทศไทย)
+          </div>
+          <div class="ts-unified">
+            <span class="ts-badge">เวลาไทย</span>
+            <span class="ts-val" id="ts-combined"
+              style="font-weight:600;color:#69F0AE;font-size:12px">กำลังโหลด...</span>
+          </div>
+        </div>
+
+        <!-- Radar Overlay -->
+        <div class="sb-sec">
+          <div class="sb-title">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3" />
+              <circle cx="12" cy="12" r="7" />
+              <circle cx="12" cy="12" r="11" />
+            </svg>
+            ภาพเรดาร์ตรวจอากาศ
+          </div>
+          <div class="op-row">
+            <label for="op-slider">ความโปร่งใส</label>
+            <input type="range" id="op-slider" min="0" max="100" value="78" aria-label="Opacity" />
+            <span class="op-val" id="op-val">78%</span>
+          </div>
+        </div>
+
+        <!-- Admin Boundaries -->
+        <div class="sb-sec">
+          <div class="sb-title">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+            </svg>
+            ขอบเขตการปกครอง
+          </div>
+
+          <!-- Province -->
+          <div class="lyr-row">
+            <div class="lyr-info">
+              <div class="lyr-dot" style="background:#0284C7"></div>
+              ขอบเขตจังหวัด
+              <span class="lyr-cnt" id="cnt-prov">77</span>
+            </div>
+            <label class="tgl" aria-label="toggle province">
+              <input type="checkbox" id="tog-prov" checked />
+              <span class="tgl-tr"></span>
+            </label>
+          </div>
+
+          <!-- Tambon Scatter Plot (Nationwide) -->
+          <div class="lyr-row" id="row-tamb">
+            <div class="lyr-info">
+              <div class="lyr-dot" style="background:#059669;box-shadow:0 0 6px #059669"></div>
+              จุดตำบล
+              <span class="lyr-cnt" id="cnt-tamb">7,367</span>
+            </div>
+            <label class="tgl" aria-label="toggle tambon scatter">
+              <input type="checkbox" id="tog-tamb" />
+              <span class="tgl-tr"></span>
+            </label>
+          </div>
+
+          <!-- Tambon Name Text Overlay -->
+          <div class="lyr-row" id="row-tamb-label">
+            <div class="lyr-info">
+              <div class="lyr-dot" style="background:#0F172A;border:1px solid #CBD5E1"></div>
+              ชื่อตำบล
+            </div>
+            <label class="tgl" aria-label="toggle tambon name overlay">
+              <input type="checkbox" id="tog-tamb-label" />
+              <span class="tgl-tr"></span>
+            </label>
+          </div>
+
+          <!-- Colorbar Overlay Toggle -->
+          <div class="lyr-row" id="row-cbar">
+            <div class="lyr-info">
+              <div class="lyr-dot"
+                style="background:linear-gradient(to bottom, #EFE6F1, #E345F5, #D43320, #F1C946, #54A431)"></div>
+              แถบสีเรดาร์
+            </div>
+            <label class="tgl" aria-label="toggle colorbar overlay">
+              <input type="checkbox" id="tog-cbar" checked />
+              <span class="tgl-tr"></span>
+            </label>
+          </div>
+
+          <!-- My Location Button -->
+          <button class="loc-btn" id="btn-loc" aria-label="ค้นหาตำแหน่งของฉัน">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            </svg>
+            ตำแหน่งของฉัน (My Location)
+          </button>
+          <div style="font-size:9.5px;color:var(--muted);margin-top:5px;line-height:1.4">
+            💡 คลิกบนแผนที่เพื่อปักหมุดตำแหน่งที่ต้องการได้เอง
+          </div>
+        </div>
+
+        <!-- Download -->
+        <div class="sb-sec">
+          <div class="sb-title">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            ดาวน์โหลดข้อมูล
+          </div>
+          <span class="dl-slot" id="dl-slot" style="margin-bottom:8px">รอบข้อมูลล่าสุด: กำลังตรวจสอบ...</span>
+          <a id="dl-nc" class="dl-a dl-nc" href="./data/composite.nc" download="composite.nc">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            NetCDF (.nc)
+          </a>
+          <a id="dl-txt" class="dl-a dl-txt" href="./data/composite.ascii" download="composite.ascii">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            ASCII (.ascii)
+          </a>
+        </div>
+
+      </div><!-- end sb-scroll -->
+    </aside>
+  </div><!-- end map-layout -->
+
+  <!-- ═══════════════════════ FOOTER ══════════════════════ -->
+  <footer class="ft" role="contentinfo">
+    <span>© 2022 Thai Meteorological Department (TMD) &nbsp;|&nbsp; Admin boundaries: geoBoundaries CC BY 4.0</span>
+    <nav aria-label="Footer">
+      <a href="https://www.tmd.go.th" target="_blank" rel="noopener">tmd.go.th</a>
+    </nav>
+  </footer>
+
+  <script>
+    (function () {
+      'use strict';
+
+      /* ── CONFIG ──────────────────────────────────────────── */
+      var CFG = {
+        DATA_PATH: './data/',
+        IMAGES_DIR: './images/',
+        LIST: './images_composite.list',
+        RADAR_COORDS: [
+          [95.0, 22.5],   // top-left
+          [108.0, 22.5],  // top-right
+          [108.0, 4.0],   // bottom-right
+          [95.0, 4.0]    // bottom-left
+        ],
+        BASEMAP: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        GEOJSON: {
+          adm1: './data/ADM1_simplified.geojson',
+          adm3: './data/tambon_points.geojson'
+        },
+        GEOJSON_FALLBACK: {
+          adm1: 'https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/THA/ADM1/geoBoundaries-THA-ADM1_simplified.geojson',
+          adm3: 'https://raw.githubusercontent.com/chingchai/OpenGISData-Thailand/master/subdistricts.geojson'
+        }
+      };
+
+      /* Product info content */
+      var PROD_INFO = {
+        composite: {
+          title: '📡 Radar Composite',
+          sub: 'PCAPPI Z-R Product',
+          body: '<p>สร้างจาก <strong>PCAPPI (Pseudo-Constant Altitude PPI)</strong> ที่ระดับความสูง <strong>2 กิโลเมตร</strong> รวมข้อมูลจากสถานีเรดาร์ทั่วประเทศ (National Mosaic)</p>' +
+            '<div class="formula">Z = 200 &times; R<sup>1.6</sup></div>' +
+            '<p style="font-size:11.5px;color:var(--muted)">สมการ Z-R แบบ Marshall-Palmer แปลงค่า Reflectivity (dBZ) เป็น Rain Rate (mm/hr)</p>' +
+            '<div class="itags"><span class="itag">📏 ระดับ 2 km</span><span class="itag">⏱ 15 นาที</span><span class="itag">Z = 200 R¹·⁶</span><span class="itag">🛰 National Mosaic</span></div>'
+        }
+      };
+
+      /* ── STATE ───────────────────────────────────────────── */
+      var S = {
+        frames: [],
+        cur: 0,
+        playing: false,
+        timer: null,
+        speed: 500,
+        adm1: null,
+        adm3: null,
+        latestRadarDate: null,
+        mapReady: false
+      };
+
+      /* ── HELPERS ─────────────────────────────────────────── */
+      function pad(n) { return String(n).padStart(2, '0'); }
+
+      /* ── CLOCK (เวลาประเทศไทย พ.ศ.) ───────────────────── */
+      function tickClock() {
+        var n = new Date();
+        var ict = new Date(n.getTime() + 7 * 3600000);
+        var d = ict.getUTCDate();
+        var m = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][ict.getUTCMonth()];
+        var yBE = ict.getUTCFullYear() + 543;
+        var timeStr = pad(ict.getUTCHours()) + ':' + pad(ict.getUTCMinutes()) + ':' + pad(ict.getUTCSeconds());
+        var el = document.getElementById('hd-clock');
+        if (el) el.textContent = d + ' ' + m + ' ' + yBE + ' | ' + timeStr + ' น.';
+      }
+      tickClock(); setInterval(tickClock, 1000);
+
+      /* ── TIMESTAMP DISPLAY (เวลาประเทศไทย พ.ศ.) ─────────── */
+      function showTimestamp(utcStr) {
+        var stIct = document.getElementById('st-ict');
+        var tsCombined = document.getElementById('ts-combined');
+
+        if (!utcStr || utcStr.indexOf(' ') < 0) {
+          if (stIct) stIct.textContent = '--';
+          if (tsCombined) tsCombined.textContent = '--';
+          return;
+        }
+        var p = utcStr.trim().split(' '), date = p[0], time = p[1];
+        var utcDate = new Date(date + 'T' + time + ':00Z');
+        var ictMs = utcDate.getTime() + 7 * 3600000;
+        var id = new Date(ictMs);
+
+        var d = id.getUTCDate();
+        var mShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'][id.getUTCMonth()];
+        var yBE = id.getUTCFullYear() + 543;
+        var timeDisp = pad(id.getUTCHours()) + ':' + pad(id.getUTCMinutes()) + ' น.';
+        var fullDisp = d + ' ' + mShort + ' ' + yBE + ' เวลา ' + timeDisp;
+
+        if (stIct) stIct.textContent = fullDisp;
+        if (tsCombined) tsCombined.textContent = fullDisp;
+      }
+
+      /* ── LIST PARSER ─────────────────────────────────────── */
+      function parseList(text) {
+        return text.split('\n').map(function (line) {
+          line = line.trim(); if (!line || line[0] === '#') return null;
+          var m = line.match(/^(\S+)\s+"([^"]+)"\s+overlay=(.+)$/);
+          if (!m) return null;
+          var ovl = m[3].split(',').map(function (s) { return s.trim(); });
+          var rf = ovl.find(function (f) { return /(zr|\d{2}\.png)/i.test(f); });
+          if (rf && !rf.includes('/') && !rf.includes('\\')) {
+            rf = 'zr/' + rf;
+          }
+          return { bg: m[1], timestamp: m[2], radarFile: rf || null };
+        }).filter(Boolean);
+      }
+
+      /* ── RADAR LOADING ───────────────────────────────────── */
+      function loadRadar() {
+        fetch(CFG.LIST)
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+          .then(function (txt) {
+            S.frames = parseList(txt);
+            if (!S.frames.length) { showTimestamp(''); setFrame(-1); return; }
+            var sl = document.getElementById('fr-slider');
+            sl.max = S.frames.length - 1; sl.value = S.frames.length - 1;
+            S.cur = S.frames.length - 1;
+            showFrame(S.cur);
+          })
+          .catch(function (e) {
+            console.warn('list load error:', e);
+            S.frames = []; showTimestamp('');
+          });
+        fetchLatestSharing();
+      }
+
+      /* ── FRAME DISPLAY ───────────────────────────────────── */
+      function showFrame(idx) {
+        if (!S.mapReady || !S.frames.length) return;
+        idx = Math.max(0, Math.min(idx, S.frames.length - 1));
+        S.cur = idx;
+        var fr = S.frames[idx];
+        if (fr && fr.radarFile) {
+          var src = map.getSource('radar-src');
+          if (src) src.updateImage({ url: CFG.IMAGES_DIR + fr.radarFile + '?_=' + Date.now() });
+        }
+
+        var timeToDisplay = '';
+        if (S.latestRadarDate && S.frames.length) {
+          var diffMin = (S.frames.length - 1 - idx) * 15;
+          var fDate = new Date(S.latestRadarDate.getTime() - diffMin * 60000);
+          var y = fDate.getUTCFullYear();
+          var mo = pad(fDate.getUTCMonth() + 1);
+          var d = pad(fDate.getUTCDate());
+          var h = pad(fDate.getUTCHours());
+          var mi = pad(fDate.getUTCMinutes());
+          timeToDisplay = y + '-' + mo + '-' + d + ' ' + h + ':' + mi;
+        } else if (fr && fr.timestamp) {
+          timeToDisplay = fr.timestamp;
+        }
+        showTimestamp(timeToDisplay);
+        setFrame(idx);
+        var sl = document.getElementById('fr-slider'); if (sl) sl.value = idx;
+      }
+
+      function getFrameRelTime(idx) {
+        var tot = S.frames.length;
+        if (!tot || idx < 0) return '-';
+        var lastIdx = tot - 1;
+        if (idx >= lastIdx) return 'ล่าสุด';
+
+        var curFr = S.frames[idx];
+        var lastFr = S.frames[lastIdx];
+        if (curFr && lastFr && curFr.timestamp && lastFr.timestamp) {
+          var tCur = new Date(curFr.timestamp.replace(' ', 'T') + ':00Z').getTime();
+          var tLast = new Date(lastFr.timestamp.replace(' ', 'T') + ':00Z').getTime();
+          var diffMin = Math.round((tLast - tCur) / 60000);
+          if (diffMin > 0) return '(- ' + diffMin + ' นาที)';
+        }
+        var stepDiff = (lastIdx - idx) * 15;
+        return '(- ' + stepDiff + ' นาที)';
+      }
+
+      function setFrame(idx) {
+        var tot = S.frames.length;
+        var sfEl = document.getElementById('st-frame'), frLbl = document.getElementById('fr-lbl'), frTot = document.getElementById('fr-total');
+        if (idx < 0 || !tot) { if (sfEl) sfEl.textContent = '-'; if (frLbl) frLbl.textContent = '-'; if (frTot) frTot.textContent = '-'; return; }
+        var relTime = getFrameRelTime(idx);
+        var isLatest = (idx === tot - 1);
+        if (sfEl) sfEl.textContent = relTime;
+        if (frLbl) frLbl.textContent = relTime;
+        if (frTot) frTot.textContent = isLatest ? 'ภาพล่าสุด' : ('ภาพ ' + (idx + 1) + ' / ' + tot);
+      }
+
+      /* ── PLAYER ──────────────────────────────────────────── */
+      var PLAY_ICO = '<polygon points="5 3 19 12 5 21 5 3"/>';
+      var PAUSE_ICO = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+      function play() {
+        if (S.playing || !S.frames.length) return;
+        S.playing = true;
+        document.getElementById('pl-play').setAttribute('aria-pressed', 'true');
+        document.getElementById('play-ico').innerHTML = PAUSE_ICO;
+        S.timer = setInterval(function () { showFrame((S.cur + 1) % S.frames.length); }, S.speed);
+      }
+      function pause() {
+        if (!S.playing) return;
+        S.playing = false; clearInterval(S.timer);
+        document.getElementById('pl-play').setAttribute('aria-pressed', 'false');
+        document.getElementById('play-ico').innerHTML = PLAY_ICO;
+      }
+
+      /* ── DOWNLOAD LINKS & RADAR.SHARING.LATEST ───────────── */
+      function parseLatestTime(text, prod) {
+        if (!text) return null;
+        text = text.trim();
+        if (text.startsWith('{')) {
+          try {
+            var obj = JSON.parse(text);
+            return obj[prod] || obj.latest || obj.time || Object.values(obj)[0];
+          } catch (e) { }
+        }
+        var lines = text.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line || line.startsWith('#')) continue;
+          if (line.indexOf('=') > 0) {
+            var parts = line.split('=');
+            var k = parts[0].trim().toLowerCase();
+            var v = parts[1].trim();
+            if (k === prod.toLowerCase() || k === 'latest' || k === 'time') return v;
+          }
+        }
+        return lines[0].trim();
+      }
+
+      function formatThaiDateTime(rawStr) {
+        if (!rawStr) return '';
+        var mCompact = rawStr.match(/^(\d{4})(\d{2})(\d{2})_?(\d{2})(\d{2})/);
+        var d, mo, y, h, mi;
+        if (mCompact) {
+          y = +mCompact[1];
+          mo = +mCompact[2] - 1;
+          d = +mCompact[3];
+          h = +mCompact[4];
+          mi = +mCompact[5];
+        } else {
+          var clean = rawStr.replace(' ', 'T');
+          if (!clean.endsWith('Z') && clean.indexOf('+') < 0) clean += 'Z';
+          var dt = new Date(clean);
+          if (!isNaN(dt.getTime())) {
+            var ict = new Date(dt.getTime() + 7 * 3600000);
+            d = ict.getUTCDate();
+            mo = ict.getUTCMonth();
+            y = ict.getUTCFullYear();
+            h = ict.getUTCHours();
+            mi = ict.getUTCMinutes();
+          } else {
+            return rawStr;
+          }
+        }
+        var yBE = y + 543;
+        var mName = THAI_MONTHS_SHORT[mo] || '';
+        return d + ' ' + mName + ' ' + yBE + ' เวลา ' + pad(h) + ':' + pad(mi) + ' น.';
+      }
+
+      function updateDlDisplay(timeStr) {
+        var sl = document.getElementById('dl-slot');
+        if (sl) {
+          sl.textContent = 'รอบข้อมูลล่าสุด: ' + (timeStr || 'ล่าสุด');
+        }
+        var base = S.prod === 'composite' ? 'composite' : 'qpe';
+        var na = document.getElementById('dl-nc');
+        var ta = document.getElementById('dl-txt');
+        if (na) {
+          na.href = CFG.DATA_PATH + base + '.nc';
+          na.setAttribute('download', base + '.nc');
+        }
+        if (ta) {
+          ta.href = CFG.DATA_PATH + base + '.ascii';
+          ta.setAttribute('download', base + '.ascii');
+        }
+      }
+
+      function parseRawToDate(rawStr) {
+        if (!rawStr) return null;
+        var mCompact = rawStr.match(/^(\d{4})(\d{2})(\d{2})_?(\d{2})(\d{2})/);
+        if (mCompact) {
+          return new Date(Date.UTC(+mCompact[1], +mCompact[2] - 1, +mCompact[3], +mCompact[4], +mCompact[5]));
+        }
+        var clean = rawStr.trim().replace(' ', 'T');
+        if (!clean.endsWith('Z') && clean.indexOf('+') < 0) clean += 'Z';
+        var dt = new Date(clean);
+        return isNaN(dt.getTime()) ? null : dt;
+      }
+
+      function fetchLatestSharing() {
+        var urls = [
+          './radar.sharing.latest',
+          './data/radar.sharing.latest'
+        ];
+        function tryFetch(i) {
+          if (i >= urls.length) {
+            // Fallback to latest frame timestamp if radar.sharing.latest is not present yet
+            if (S.frames.length) {
+              var lastFr = S.frames[S.frames.length - 1];
+              if (lastFr && lastFr.timestamp) {
+                S.latestRadarDate = parseRawToDate(lastFr.timestamp);
+                updateDlDisplay(formatThaiDateTime(lastFr.timestamp));
+                if (S.mapReady && S.frames.length) showFrame(S.cur);
+                return;
+              }
+            }
+            updateDlDisplay('ล่าสุด');
+            return;
+          }
+          fetch(urls[i] + '?_=' + Date.now())
+            .then(function (r) {
+              if (!r.ok) throw new Error('HTTP ' + r.status);
+              return r.text();
+            })
+            .then(function (txt) {
+              var raw = parseLatestTime(txt, S.prod);
+              if (raw) {
+                S.latestRadarDate = parseRawToDate(raw);
+                updateDlDisplay(formatThaiDateTime(raw));
+                if (S.mapReady && S.frames.length) showFrame(S.cur);
+              } else {
+                tryFetch(i + 1);
+              }
+            })
+            .catch(function () {
+              tryFetch(i + 1);
+            });
+        }
+        tryFetch(0);
+      }
+
+      fetchLatestSharing();
+      setInterval(fetchLatestSharing, 60000);
+
+
+
+      /* ── INFO MODAL ──────────────────────────────────────── */
+      function showModal(prod) {
+        var info = PROD_INFO[prod]; if (!info) return;
+        var body = document.getElementById('modal-body');
+        if (body) body.innerHTML = '<h3>' + info.title + '</h3><div class="modal-sub">' + info.sub + '</div><hr>' + info.body;
+        document.getElementById('modal-ov').classList.add('vis');
+      }
+      function hideModal() { document.getElementById('modal-ov').classList.remove('vis'); }
+
+      /* ── LOCAL SERVER GEOJSON FETCH ─────────────────────── */
+      function fetchGeo(levelKey) {
+        var localUrl = CFG.GEOJSON[levelKey];
+        var fallbackUrl = CFG.GEOJSON_FALLBACK[levelKey];
+        return fetch(localUrl)
+          .then(function (r) {
+            if (!r.ok) throw new Error('Local fetch HTTP ' + r.status);
+            return r.json();
+          })
+          .catch(function (err) {
+            console.warn('โหลดจาก ' + localUrl + ' ไม่สำเร็จ กำลังใช้ CDN สำรอง:', err);
+            return fetch(fallbackUrl).then(function (r) {
+              if (!r.ok) throw new Error('Fallback HTTP ' + r.status);
+              return r.json();
+            });
+          });
+      }
+
+      /* ── ADMIN BOUNDARY LOGIC ────────────────────────────── */
+      function loadProvinces() {
+        fetchGeo('adm1')
+          .then(function (gj) {
+            S.adm1 = gj;
+            map.getSource('prov-src').setData(gj);
+            document.getElementById('cnt-prov').textContent = gj.features.length;
+          })
+          .catch(function (e) { console.warn('ADM1 error:', e); });
+      }
+
+      function loadTambons() {
+        fetchGeo('adm3')
+          .then(function (gj) {
+            S.adm3 = gj;
+            map.getSource('tamb-src').setData(gj);
+            var isChecked = document.getElementById('tog-tamb') && document.getElementById('tog-tamb').checked;
+            if (map.getLayer('tamb-circle')) {
+              map.setLayoutProperty('tamb-circle', 'visibility', isChecked ? 'visible' : 'none');
+            }
+            document.getElementById('cnt-tamb').textContent = gj.features.length.toLocaleString();
+          })
+          .catch(function (e) { console.warn('ADM3 error:', e); });
+      }
+
+      /* ── MAP LAYER SETUP ─────────────────────────────────── */
+      function addMapLayers() {
+        var initUrl = CFG.IMAGES_DIR + 'zr/00.png';
+        var emptyFC = { type: 'FeatureCollection', features: [] };
+
+        function addGeoSrc(id, data) { if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: data || emptyFC }); }
+        function addLine(id, src, color, width, dash, vis) {
+          if (!map.getLayer(id)) {
+            var p = { 'line-color': color, 'line-width': width, 'line-opacity': 0.85 };
+            if (dash) p['line-dasharray'] = dash;
+            map.addLayer({ id: id, type: 'line', source: src, paint: p, layout: { visibility: vis || 'visible' } });
+          }
+        }
+        function addFill(id, src, color, opacity, vis) {
+          if (!map.getLayer(id)) map.addLayer({ id: id, type: 'fill', source: src, paint: { 'fill-color': color, 'fill-opacity': opacity }, layout: { visibility: vis || 'visible' } });
+        }
+
+        // 1. Province boundary: stroke only (no fill), crisp deep blue
+        addGeoSrc('prov-src');
+        addLine('prov-line', 'prov-src', '#0284C7', 1.6, null, 'visible');
+        addFill('prov-fill', 'prov-src', '#0284C7', 0.0001, 'visible'); // No visible fill, transparent for click detection
+
+        // 2. Tambon Scatter Plot points
+        addGeoSrc('tamb-src');
+        if (!map.getLayer('tamb-circle')) {
+          map.addLayer({
+            id: 'tamb-circle',
+            type: 'circle',
+            source: 'tamb-src',
+            layout: { visibility: 'none' },
+            paint: {
+              'circle-radius': [
+                'interpolate', ['linear'], ['zoom'],
+                5, 1.2,
+                8, 2.0,
+                11, 3.2,
+                14, 4.5
+              ],
+              'circle-color': '#059669',
+              'circle-stroke-width': 1.0,
+              'circle-stroke-color': '#FFFFFF',
+              'circle-opacity': 0.95
+            }
+          });
+        }
+
+        // 3. Tambon Name Text Overlay (อยู่บนหัว scatter plot พร้อมรองรับฟอนต์ภาษาไทย)
+        if (!map.getLayer('tamb-label')) {
+          map.addLayer({
+            id: 'tamb-label',
+            type: 'symbol',
+            source: 'tamb-src',
+            layout: {
+              'visibility': 'none',
+              'text-field': ['get', 'tam_th'],
+              'text-font': ['Noto Sans Regular'],
+              'text-size': [
+                'interpolate', ['linear'], ['zoom'],
+                6, 9.0,
+                9, 10.5,
+                12, 12.0,
+                15, 14.0
+              ],
+              'text-offset': [0, -0.65],
+              'text-anchor': 'bottom',
+              'text-allow-overlap': false,
+              'text-ignore-placement': false
+            },
+            paint: {
+              'text-color': '#0F172A',
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 2.5
+            }
+          });
+        }
+
+        // 4. Pin Location Layer (อยู่ใต้รูปฝน)
+        addGeoSrc('pin-src');
+        if (!map.getLayer('pin-outer')) {
+          map.addLayer({
+            id: 'pin-outer',
+            type: 'circle',
+            source: 'pin-src',
+            paint: {
+              'circle-radius': 13,
+              'circle-color': ['case', ['get', 'isUser'], '#0284C7', '#059669'],
+              'circle-opacity': 0.35,
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#FFFFFF'
+            }
+          });
+        }
+        if (!map.getLayer('pin-inner')) {
+          map.addLayer({
+            id: 'pin-inner',
+            type: 'circle',
+            source: 'pin-src',
+            paint: {
+              'circle-radius': 6.5,
+              'circle-color': ['case', ['get', 'isUser'], '#0284C7', '#059669'],
+              'circle-stroke-width': 2.5,
+              'circle-stroke-color': '#FFFFFF'
+            }
+          });
+        }
+        if (!map.getLayer('pin-label')) {
+          map.addLayer({
+            id: 'pin-label',
+            type: 'symbol',
+            source: 'pin-src',
+            layout: {
+              'text-field': ['get', 'title'],
+              'text-font': ['Noto Sans Regular'],
+              'text-size': 12,
+              'text-offset': [0, -1.0],
+              'text-anchor': 'bottom',
+              'text-allow-overlap': true
+            },
+            paint: {
+              'text-color': ['case', ['get', 'isUser'], '#0369A1', '#065F46'],
+              'text-halo-color': '#FFFFFF',
+              'text-halo-width': 2.5
+            }
+          });
+        }
+
+        // 5. Radar / Rain layer: TOPMOST LAYER (อยู่ชั้นบนสุด ทับตัว Pin)
+        if (!map.getSource('radar-src')) {
+          map.addSource('radar-src', { type: 'image', url: initUrl, coordinates: CFG.RADAR_COORDS });
+        }
+        if (!map.getLayer('radar-layer')) {
+          map.addLayer({ id: 'radar-layer', type: 'raster', source: 'radar-src', paint: { 'raster-opacity': 0.78, 'raster-resampling': 'nearest' } });
+        } else {
+          map.moveLayer('radar-layer'); // Move radar to topmost layer
+        }
+
+      }
+
+      /* ── MAP INIT ────────────────────────────────────────── */
+      var map = new maplibregl.Map({
+        container: 'map',
+        style: CFG.BASEMAP,
+        center: [101.2, 13.5],
+        zoom: 5.0,
+        minZoom: 4.5,
+        maxBounds: [[88, 1], [115, 27]],
+        attributionControl: false,
+        transformRequest: function (url, resourceType) {
+          if (resourceType === 'Glyphs') {
+            var range = url.split('/').pop();
+            if (range === '3584-3839.pbf' || range === '0-255.pbf') {
+              return { url: './data/fonts/Noto Sans Regular/' + range };
+            }
+            return { url: 'https://protomaps.github.io/basemaps-assets/fonts/Noto%20Sans%20Regular/' + range };
+          }
+        }
+      });
+      map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+      map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right');
+      map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+
+      map.on('load', function () {
+        S.mapReady = true;
+        addMapLayers();
+        loadProvinces();
+        loadTambons();
+        loadRadar();
+        document.getElementById('map-load').classList.add('hidden');
+        requestUserLocation(false); // Do not zoom in on load, stay at outermost zoom
+      });
+
+      map.on('error', function () { document.getElementById('map-load').classList.add('hidden'); });
+
+      /* Map click - allow user to pin anywhere on map */
+      map.on('click', function (e) {
+        var lng = e.lngLat.lng;
+        var lat = e.lngLat.lat;
+
+        // Check if clicked inside a province polygon
+        var features = map.queryRenderedFeatures(e.point, { layers: ['prov-fill'] });
+        var provName = '';
+        if (features && features.length) {
+          provName = features[0].properties.shapeName || features[0].properties.NAME_1 || '';
+        }
+
+        // Check if clicked directly on or near a tambon point
+        var tambFeatures = map.queryRenderedFeatures(e.point, { layers: ['tamb-circle'] });
+        var title = 'ตำแหน่งที่ปักหมุด';
+        var desc = 'พิกัด: ' + lat.toFixed(4) + ', ' + lng.toFixed(4);
+        if (tambFeatures && tambFeatures.length) {
+          var tp = tambFeatures[0].properties || {};
+          title = tp.tam_th || title;
+          if (tp.pro_th) {
+            desc = tp.tam_th + ' ' + (tp.amp_th || '') + ' จ.' + tp.pro_th;
+          }
+        } else if (provName) {
+          title = 'ปักหมุด จ.' + provName;
+        }
+
+        // Move pin directly to clicked point (under rain layer, without changing zoom)
+        setPin(lng, lat, title, desc, true, false);
+      });
+
+      /* ── UI EVENT LISTENERS ──────────────────────────────── */
+      /* Info button */
+      var btnProdInfo = document.getElementById('btn-prod-info');
+      if (btnProdInfo) {
+        btnProdInfo.addEventListener('click', function (e) {
+          e.stopPropagation();
+          showModal('composite');
+        });
+      }
+      document.getElementById('modal-close').addEventListener('click', hideModal);
+      document.getElementById('modal-ov').addEventListener('click', function (e) { if (e.target === this) hideModal(); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideModal(); });
+
+      /* Player */
+      document.getElementById('pl-first').addEventListener('click', function () { pause(); showFrame(0); });
+      document.getElementById('pl-prev').addEventListener('click', function () { pause(); showFrame(Math.max(0, S.cur - 1)); });
+      document.getElementById('pl-play').addEventListener('click', function () { S.playing ? pause() : play(); });
+      document.getElementById('pl-next').addEventListener('click', function () { pause(); showFrame(Math.min(S.frames.length - 1, S.cur + 1)); });
+      document.getElementById('pl-last').addEventListener('click', function () { pause(); showFrame(S.frames.length - 1); });
+      document.getElementById('fr-slider').addEventListener('input', function () { pause(); showFrame(+this.value); });
+      document.getElementById('sp-sel').addEventListener('change', function () { S.speed = +this.value; if (S.playing) { pause(); play(); } });
+
+      /* Opacity */
+      document.getElementById('op-slider').addEventListener('input', function () {
+        var v = +this.value / 100;
+        if (S.mapReady && map.getLayer('radar-layer')) map.setPaintProperty('radar-layer', 'raster-opacity', v);
+        document.getElementById('op-val').textContent = this.value + '%';
+      });
+
+      /* Layer toggles */
+      document.getElementById('tog-prov').addEventListener('change', function () {
+        if (!S.mapReady) return;
+        var v = this.checked ? 'visible' : 'none';
+        if (map.getLayer('prov-line')) map.setLayoutProperty('prov-line', 'visibility', v);
+        if (map.getLayer('prov-fill')) map.setLayoutProperty('prov-fill', 'visibility', v);
+      });
+      document.getElementById('tog-tamb').addEventListener('change', function () {
+        if (!S.mapReady) return;
+        var v = this.checked ? 'visible' : 'none';
+        if (map.getLayer('tamb-circle')) map.setLayoutProperty('tamb-circle', 'visibility', v);
+      });
+      document.getElementById('tog-tamb-label').addEventListener('change', function () {
+        if (!S.mapReady) return;
+        var v = this.checked ? 'visible' : 'none';
+        if (map.getLayer('tamb-label')) map.setLayoutProperty('tamb-label', 'visibility', v);
+      });
+
+      /* Mobile sidebar toggle */
+      document.getElementById('sb-toggle').addEventListener('click', function () {
+        document.getElementById('sidebar').classList.toggle('open');
+      });
+
+      /* ── USER LOCATION & PIN LOGIC (UNDER RAIN LAYER) ─── */
+      var TMD_BANGNA = {
+        lng: 100.606767,
+        lat: 13.668419,
+        name: 'กรมอุตุนิยมวิทยา',
+        desc: 'สำนักงานใหญ่ บางนา กรุงเทพฯ'
+      };
+
+      function setPin(lng, lat, title, desc, isUser, shouldFly) {
+        var geojson = {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+            properties: {
+              title: (isUser ? '📍 ' : '🏢 ') + title,
+              desc: desc,
+              isUser: isUser
+            }
+          }]
+        };
+
+        if (map.getSource('pin-src')) {
+          map.getSource('pin-src').setData(geojson);
+        }
+
+        // Ensure radar layer stays above the pin
+        if (map.getLayer('radar-layer')) {
+          map.moveLayer('radar-layer');
+        }
+
+        if (shouldFly) {
+          map.flyTo({
+            center: [lng, lat],
+            zoom: isUser ? 9.5 : 8.5,
+            essential: true,
+            duration: 1200
+          });
+        }
+      }
+
+      function requestUserLocation(fly) {
+        var doFly = (fly === true);
+        if ('geolocation' in navigator) {
+          navigator.geolocation.getCurrentPosition(
+            function (pos) {
+              // User ALLOWED location
+              var lng = pos.coords.longitude;
+              var lat = pos.coords.latitude;
+              setPin(lng, lat, 'ตำแหน่งของคุณ', 'พิกัดปัจจุบันจากอุปกรณ์', true, doFly);
+            },
+            function (err) {
+              // User DENIED or error -> default to TMD Headquarters in Bang Na, Bangkok
+              console.warn('Geolocation denied or unavailable (' + err.code + '): ' + err.message);
+              setPin(TMD_BANGNA.lng, TMD_BANGNA.lat, TMD_BANGNA.name, TMD_BANGNA.desc, false, doFly);
+            },
+            { timeout: 8000, enableHighAccuracy: true }
+          );
+        } else {
+          // Geolocation not supported in browser -> default to TMD Headquarters
+          setPin(TMD_BANGNA.lng, TMD_BANGNA.lat, TMD_BANGNA.name, TMD_BANGNA.desc, false, doFly);
+        }
+      }
+
+      document.getElementById('btn-loc').addEventListener('click', function () {
+        requestUserLocation(true);
+      });
+
+      /* ── COLORBAR OVERLAY INTERACTIONS ───────────────────── */
+      var togCbar = document.getElementById('tog-cbar');
+      var cbarOv = document.getElementById('cbar-overlay');
+      var cbarMin = document.getElementById('cbar-min-btn');
+
+      if (togCbar && cbarOv) {
+        togCbar.addEventListener('change', function () {
+          cbarOv.classList.toggle('hidden', !this.checked);
+        });
+      }
+      if (cbarMin && cbarOv) {
+        cbarMin.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var isMin = cbarOv.classList.toggle('minimized');
+          cbarMin.textContent = isMin ? '+' : '−';
+        });
+      }
+
+    })();
+  </script>
+</body>
+
+</html>
